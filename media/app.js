@@ -727,6 +727,8 @@
     state.drawer = null;
     state.settingsOpen = false;
     render();
+    // 异步刷新云端书架，确保阅读器顶栏按钮状态最新
+    refreshShelfRemote().catch(function () { /* ignore */ });
     // 加载目录
     call('directory', { bookId: bookId }).then(async function (d) {
       state.directory = d;
@@ -982,13 +984,31 @@
     shelfBtn.id = 'shelfAddInReaderBtn';
     shelfBtn.title = '加入书架（云端）';
     shelfBtn.textContent = '+';
-    // 根据当前书架状态初始化
+    // 根据当前书架状态初始化（先看本地，云端回来后再补一次）
     if (state.readerBookId && isInShelf(state.readerBookId)) {
       shelfBtn.textContent = '✓';
       shelfBtn.title = '已在书架（点移除）';
       shelfBtn.dataset.inShelf = '1';
     }
     toolGroup.appendChild(shelfBtn);
+    // 异步：根据云端结果二次校正（解决"刚加完进 reader 仍显示 +"的问题）
+    if (state.readerBookId) {
+      var bid = state.readerBookId;
+      var shelfBtnRef = shelfBtn;
+      var fixBtn = function () {
+        var inShelf = isInShelf(bid);
+        if (inShelf && shelfBtnRef.dataset.inShelf !== '1') {
+          shelfBtnRef.textContent = '✓';
+          shelfBtnRef.title = '已在书架（点移除）';
+          shelfBtnRef.dataset.inShelf = '1';
+        } else if (!inShelf && shelfBtnRef.dataset.inShelf === '1') {
+          shelfBtnRef.textContent = '+';
+          shelfBtnRef.title = '加入书架（云端）';
+          shelfBtnRef.dataset.inShelf = '';
+        }
+      };
+      refreshShelfRemote().then(fixBtn).catch(function () { /* ignore */ });
+    }
     var setBtn = el('button', 'reader-bar-icon');
     setBtn.id = 'settingsBtn';
     setBtn.title = '设置';
@@ -1448,23 +1468,29 @@
       var orig = sb.textContent;
       sb.textContent = inShelf ? '移除中…' : '添加中…';
       var p = inShelf
-        ? call('shelf-remove', { bookId: bookId }).then(function () { return { remoteOk: true, removed: true }; })
+        ? call('shelf-remove', { bookId: bookId }).then(function () { return { removed: true }; })
         : call('shelf-add', { bookId: bookId });
       p.then(function (r) {
         if (r && r.removed) {
-          // 同步本地书架（remove 后端没回 local 数组，所以本地要自己删）
+          // remove 后端不返回 local 数组，前端自己改
           state.shelfLocal = state.shelfLocal.filter(function (i) { return i.bookId !== bookId; });
           sortShelfLocal();
+        } else {
+          // add 后端只返回计数，不返回 local 内容；为防止状态错位，强制重拉 local
+          return call('shelf-local-get', {}).then(function (fresh) {
+            state.shelfLocal = fresh || [];
+            sortShelfLocal();
+          });
         }
-        // 无论 add/remove 都刷一次云端，避免状态错位
-        return refreshShelfRemote().then(function (remote) {
-          sb.textContent = (function () {
-            var nowIn = state.shelfLocal.some(function (i) { return i.bookId === bookId; })
-              || remote.some(function (i) { return i.book_id === bookId; });
-            sb.dataset.inShelf = nowIn ? '1' : '';
-            return nowIn ? '已在书架（点移除）' : '加入书架';
-          })();
-        });
+      }).then(function () {
+        // 无论 add/remove 都再刷一次云端，避免状态错位
+        return refreshShelfRemote();
+      }).then(function (remote) {
+        var nowIn = state.shelfLocal.some(function (i) { return i.bookId === bookId; })
+          || remote.some(function (i) { return i.book_id === bookId; });
+        sb.dataset.inShelf = nowIn ? '1' : '';
+        sb.textContent = nowIn ? '已在书架（点移除）' : '加入书架';
+        sb.title = nowIn ? '点击从书架移除' : '加入书架（含云端）';
       }).catch(function (e) {
         sb.textContent = (inShelf ? '移除失败：' : '添加失败：') + e.message;
       }).then(function () {
@@ -1567,14 +1593,21 @@
             })
           : call('shelf-add', { bookId: b });
         p.then(function (r) {
-          return refreshShelfRemote().then(function (remote) {
-            var nowIn = state.shelfLocal.some(function (i) { return i.bookId !== b ? true : i.bookId === b; })
-              && state.shelfLocal.some(function (i) { return i.bookId === b; });
-            nowIn = nowIn || remote.some(function (i) { return i.book_id === b; });
-            bk.dataset.inShelf = nowIn ? '1' : '';
-            bk.textContent = nowIn ? '✓' : '+';
-            bk.title = nowIn ? '已在书架（点移除）' : '加入书架（云端）';
-          });
+          if (!r || !r.removed) {
+            // add 成功后端不返回 local 数组，强制重拉
+            return call('shelf-local-get', {}).then(function (fresh) {
+              state.shelfLocal = fresh || [];
+              sortShelfLocal();
+            });
+          }
+        }).then(function () {
+          return refreshShelfRemote();
+        }).then(function (remote) {
+          var nowIn = state.shelfLocal.some(function (i) { return i.bookId === b; })
+            || remote.some(function (i) { return i.book_id === b; });
+          bk.dataset.inShelf = nowIn ? '1' : '';
+          bk.textContent = nowIn ? '✓' : '+';
+          bk.title = nowIn ? '已在书架（点移除）' : '加入书架（云端）';
         }).catch(function (e) {
           bk.textContent = inShelf ? '−' : '+';
           bk.title = (inShelf ? '移除失败：' : '加入失败：') + e.message;
