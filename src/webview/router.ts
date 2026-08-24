@@ -157,8 +157,8 @@ async function handleMessage(webview: vscode.Webview, msg: any): Promise<void> {
     /* ------------------------------ 书架 ------------------------------ */
     case 'shelf-local-get': {
       const items = await getLocalShelf();
-      // 补全缺失封面/书名/总章节数（旧数据无封面，用 simple/info 稳定接口补齐并写回）
-      const missing = items.filter(i => !i.coverUrl || !i.title || !i.totalChapters);
+      // 补全缺失封面/书名（旧数据无封面，用 simple/info 稳定接口补齐并写回）
+      const missing = items.filter(i => !i.coverUrl || !i.title);
       if (missing.length) {
         try {
           const info = await api.getBookSimpleInfo(missing.map(m => m.bookId));
@@ -170,10 +170,6 @@ async function handleMessage(webview: vscode.Webview, msg: any): Promise<void> {
               if (!it.coverUrl && b.thumb_url) { it.coverUrl = b.thumb_url; changed = true; }
               if (!it.title && b.book_name) { it.title = b.book_name; changed = true; }
               if (!it.author && b.author_name) { it.author = b.author_name; changed = true; }
-              if ((!it.totalChapters || it.totalChapters <= 0) && Number(b.serial_count) > 0) {
-                it.totalChapters = Number(b.serial_count);
-                changed = true;
-              }
             }
           }
           if (changed) await setLocalShelf(items);

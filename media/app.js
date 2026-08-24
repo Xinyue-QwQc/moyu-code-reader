@@ -458,36 +458,10 @@
     return renderShelfLocalGrid();
   }
 
-  /** 章节标题里"第X章" → 解析出 X；解析不到返回 0 */
-  function parseChapterNumber(title) {
-    if (!title) return 0;
-    var m = String(title).match(/第\s*([0-9０-９一二三四五六七八九十百千零〇两]+)\s*[章回节]/);
-    if (!m) return 0;
-    var raw = m[1];
-    // 全角转半角
-    var half = raw.replace(/[０-９]/g, function (c) { return String(c.charCodeAt(0) - 0xFEE0); });
-    if (/^[0-9]+$/.test(half)) return parseInt(half, 10) || 0;
-    // 中文数字 → 整数（支持 一/二/三…十/百/千/零/两）
-    var cn = { '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 };
-    var unit = { '十': 10, '百': 100, '千': 1000 };
-    if (half.length === 1 && cn[half] !== undefined) return cn[half];
-    var n = 0, cur = 0;
-    for (var i = 0; i < half.length; i++) {
-      var c = half[i];
-      if (cn[c] !== undefined) cur = cn[c];
-      else if (unit[c]) { n += (cur || 1) * unit[c]; cur = 0; }
-      else return 0;
-    }
-    return n + cur;
-  }
-
-  /** 统一展示：xxx章/xxx章（有进度显示已读序数；总章节数优先用 serial_count；都没有就 ?/?) */
-  function renderReadingLine(lastChapterTitle, totalChapters) {
-    var cur = parseChapterNumber(lastChapterTitle);
-    var total = Number(totalChapters) || 0;
-    var left = cur > 0 ? (cur + '章') : '?章';
-    var right = total > 0 ? (total + '章') : '?章';
-    return el('div', 'reading', left + '/' + right);
+  /** 单本"读到：xxx" 行：有进度=显示章节名；无进度=显示 author（与 2026.8.22 一致），颜色统一灰黑 */
+  function renderReadingLine(lastChapterTitle, fallback) {
+    if (lastChapterTitle) return el('div', 'reading', '读到：' + lastChapterTitle);
+    return el('div', 'reading', fallback || '');
   }
 
   function renderShelfLocalGrid() {
@@ -508,8 +482,10 @@
       var rm = el('button', 'remove', '✕');
       rm.dataset.remove = it.bookId;
       var title = el('div', 'title', it.title || it.bookId);
-      // 本地书架：total 来自 shelf-local-get（后端用 simple/info 补全）
-      var line = renderReadingLine(it.lastReadChapterTitle, it.totalChapters);
+      // 与 2026.8.22 一致：有进度显示"读到：xxx"；无进度显示 author
+      var line = it.lastReadChapterTitle
+        ? el('div', 'reading', '读到：' + it.lastReadChapterTitle)
+        : el('div', 'meta', it.author || '');
       item.appendChild(rm);
       item.appendChild(img);
       item.appendChild(title);
@@ -539,8 +515,10 @@
       if (it.cover_url) { img.src = it.cover_url; img.onerror = coverFallback; }
       else img.style.background = 'linear-gradient(135deg,#888,#aaa)';
       var title = el('div', 'title', it.title || it.book_id);
-      // 云端书架有 serial_count
-      var line = renderReadingLine(it.current_chapter_title, it.serial_count);
+      // 与 2026.8.22 一致：有进度显示"读到：xxx"；无进度显示 author
+      var line = it.current_chapter_title
+        ? el('div', 'reading', '读到：' + it.current_chapter_title)
+        : el('div', 'meta', it.author || '');
       item.appendChild(img);
       item.appendChild(title);
       item.appendChild(line);

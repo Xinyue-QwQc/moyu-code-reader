@@ -92,8 +92,6 @@ export interface LocalShelfItem {
   lastReadItemId?: string;
   lastReadChapterTitle?: string;
   lastReadAt?: number;
-  /** 总章节数（来自 simple/info 的 serial_count，仅展示用） */
-  totalChapters?: number;
 }
 
 export async function getLocalShelf(): Promise<LocalShelfItem[]> {

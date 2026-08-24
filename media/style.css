@@ -185,7 +185,7 @@ body {
 .shelf-item:hover .remove { display: block; }
 .shelf-item .cover { width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 8px; cursor: pointer; display: block; background: var(--border); }
 .shelf-item .title { font-size: 12px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.shelf-item .meta { font-size: 11px; color: var(--fg2); }
+.shelf-item .meta { font-size: 11px; color: #888; opacity: 0.7; }
 .shelf-item .reading { font-size: 11px; color: #888; opacity: 0.7; }
 
 /* ============ 书籍详情弹窗 ============ */
