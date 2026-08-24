@@ -641,6 +641,28 @@
   }
 
   /* ---------------- 书籍详情 ---------------- */
+  /** 是否已加书架（任一来源） */
+  function isInShelf(bookId) {
+    if (!bookId) return false;
+    if (state.shelfLocal.some(function (i) { return i.bookId === bookId; })) return true;
+    if (state.shelfRemote.some(function (i) { return i.book_id === bookId; })) return true;
+    return false;
+  }
+  /** 根据当前状态刷新指定按钮文案/标题 */
+  function applyShelfBtnState(btn, bookId) {
+    if (!btn) return;
+    var inShelf = isInShelf(bookId);
+    btn.dataset.inShelf = inShelf ? '1' : '';
+    btn.textContent = inShelf ? '已在书架（点移除）' : '加入书架';
+    btn.title = inShelf ? '点击从书架移除' : '加入书架（含云端）';
+  }
+  /** 异步刷一下云端书架（不阻塞 UI） */
+  function refreshShelfRemote() {
+    return call('shelf-remote-get', {}).then(function (r) {
+      state.shelfRemote = (r && r.entries) || [];
+      return state.shelfRemote;
+    }).catch(function () { return state.shelfRemote; });
+  }
   function showBookModal(bookId) {
     var mask = el('div', 'modal-mask');
     mask.id = 'bookModal';
@@ -679,6 +701,7 @@
       var shelfBtn = el('button', 'btn secondary', '加入书架');
       shelfBtn.id = 'shelfAddBtn';
       shelfBtn.dataset.bookId = b.book_id;
+      applyShelfBtnState(shelfBtn, b.book_id);
       actions.appendChild(read);
       actions.appendChild(shelfBtn);
       modal.appendChild(actions);
@@ -959,6 +982,12 @@
     shelfBtn.id = 'shelfAddInReaderBtn';
     shelfBtn.title = '加入书架（云端）';
     shelfBtn.textContent = '+';
+    // 根据当前书架状态初始化
+    if (state.readerBookId && isInShelf(state.readerBookId)) {
+      shelfBtn.textContent = '✓';
+      shelfBtn.title = '已在书架（点移除）';
+      shelfBtn.dataset.inShelf = '1';
+    }
     toolGroup.appendChild(shelfBtn);
     var setBtn = el('button', 'reader-bar-icon');
     setBtn.id = 'settingsBtn';
@@ -1378,6 +1407,7 @@
         call('shelf-remove', { bookId: rb.dataset.remove }).then(function () {
           state.shelfLocal = state.shelfLocal.filter(function (i) { return i.bookId !== rb.dataset.remove; });
           renderShelf($('#view'));
+          refreshShelfRemote().catch(function () { /* ignore */ });
         });
         return;
       }
@@ -1411,13 +1441,34 @@
       return;
     }
     if (t.id === 'shelfAddBtn') {
-      t.disabled = true;
-      t.textContent = '添加中…';
-      call('shelf-add', { bookId: t.dataset.bookId }).then(function (r) {
-        t.textContent = r.remoteOk ? '已加入（含云端）' : '已加入本地书架';
-        refreshShelfCache();
+      var sb = t;
+      var bookId = sb.dataset.bookId;
+      var inShelf = sb.dataset.inShelf === '1';
+      sb.disabled = true;
+      var orig = sb.textContent;
+      sb.textContent = inShelf ? '移除中…' : '添加中…';
+      var p = inShelf
+        ? call('shelf-remove', { bookId: bookId }).then(function () { return { remoteOk: true, removed: true }; })
+        : call('shelf-add', { bookId: bookId });
+      p.then(function (r) {
+        if (r && r.removed) {
+          // 同步本地书架（remove 后端没回 local 数组，所以本地要自己删）
+          state.shelfLocal = state.shelfLocal.filter(function (i) { return i.bookId !== bookId; });
+          sortShelfLocal();
+        }
+        // 无论 add/remove 都刷一次云端，避免状态错位
+        return refreshShelfRemote().then(function (remote) {
+          sb.textContent = (function () {
+            var nowIn = state.shelfLocal.some(function (i) { return i.bookId === bookId; })
+              || remote.some(function (i) { return i.book_id === bookId; });
+            sb.dataset.inShelf = nowIn ? '1' : '';
+            return nowIn ? '已在书架（点移除）' : '加入书架';
+          })();
+        });
       }).catch(function (e) {
-        t.textContent = '添加失败：' + e.message;
+        sb.textContent = (inShelf ? '移除失败：' : '添加失败：') + e.message;
+      }).then(function () {
+        setTimeout(function () { try { sb.disabled = false; } catch (e) {} }, 600);
       });
       return;
     }
@@ -1501,21 +1552,34 @@
         return;
       }
       if (t.id === 'shelfAddInReaderBtn') {
-        // 阅读器内：一键加入（云端）书架
+        // 阅读器内：toggle 加入/移除云端书架
         var b = state.readerBookId;
         if (!b) return;
         var bk = t;
-        var oldTxt = bk.textContent;
+        var inShelf = isInShelf(b);
         bk.disabled = true;
         bk.textContent = '…';
-        call('shelf-add', { bookId: b }).then(function (r) {
-          bk.textContent = r && r.remoteOk ? '✓' : '+';
-          bk.title = (r && r.remoteOk) ? '已加入云端书架' : '已加入本地（未登录或云端失败）';
+        var p = inShelf
+          ? call('shelf-remove', { bookId: b }).then(function () {
+              state.shelfLocal = state.shelfLocal.filter(function (i) { return i.bookId !== b; });
+              sortShelfLocal();
+              return { removed: true };
+            })
+          : call('shelf-add', { bookId: b });
+        p.then(function (r) {
+          return refreshShelfRemote().then(function (remote) {
+            var nowIn = state.shelfLocal.some(function (i) { return i.bookId !== b ? true : i.bookId === b; })
+              && state.shelfLocal.some(function (i) { return i.bookId === b; });
+            nowIn = nowIn || remote.some(function (i) { return i.book_id === b; });
+            bk.dataset.inShelf = nowIn ? '1' : '';
+            bk.textContent = nowIn ? '✓' : '+';
+            bk.title = nowIn ? '已在书架（点移除）' : '加入书架（云端）';
+          });
         }).catch(function (e) {
-          bk.textContent = oldTxt;
-          bk.title = '加入失败：' + e.message;
+          bk.textContent = inShelf ? '−' : '+';
+          bk.title = (inShelf ? '移除失败：' : '加入失败：') + e.message;
         }).then(function () {
-          setTimeout(function () { try { bk.disabled = false; } catch (e) {} }, 1200);
+          setTimeout(function () { try { bk.disabled = false; } catch (e) {} }, 800);
         });
         return;
       }
