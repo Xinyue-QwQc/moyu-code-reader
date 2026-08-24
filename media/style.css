@@ -167,6 +167,14 @@ body {
 .search-list .tag { display: inline-block; font-size: 11px; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; margin-right: 6px; }
 
 /* ============ 书架 ============ */
+.shelf-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.shelf-tab {
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  padding: 8px 18px; font-size: 14px; font-weight: 500; color: var(--fg2);
+  cursor: pointer; transition: color 0.15s, border-color 0.15s; margin-bottom: -1px;
+}
+.shelf-tab:hover { color: var(--fg); }
+.shelf-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .shelf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; }
 .shelf-item { position: relative; }
 .shelf-item .remove {
@@ -178,7 +186,9 @@ body {
 .shelf-item .cover { width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 8px; cursor: pointer; display: block; background: var(--border); }
 .shelf-item .title { font-size: 12px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shelf-item .meta { font-size: 11px; color: var(--fg2); }
-.shelf-item .reading { font-size: 11px; color: var(--accent); }
+.shelf-item .reading { font-size: 11px; }
+.shelf-item .reading.read { color: var(--accent); }
+.shelf-item .reading.unread { color: #888; opacity: 0.65; }
 
 /* ============ 书籍详情弹窗 ============ */
 .modal-mask {

@@ -79,6 +79,7 @@
     shelfLocal: [],
     shelfRemote: [],
     shelfLoading: false,
+    shelfTab: null, // 'local' | 'remote' | null（null 时按登录态自动选：登录=remote，未登录=local）
     // 登录
     qrSession: 0,
     qrUrl: null,
@@ -421,79 +422,110 @@
       state.shelfRemote = (rs[1] && rs[1].entries) || [];
       state.shelfLoading = false;
       view.innerHTML = '';
-      var sec = el('div', 'section-title', '本地书架');
-      view.appendChild(sec);
-      var grid = el('div', 'shelf-grid');
-      if (state.shelfLocal.length) {
-        state.shelfLocal.forEach(function (it) {
-          var item = el('div', 'shelf-item');
-          // 整个 .shelf-item 自己就是点击目标（不再依赖子元素选择器）
-          item.dataset.bookId = it.bookId;
-          item.dataset.itemId = it.lastReadItemId || '';
-          item.dataset.action = 'open';
-          item.title = '点击继续阅读';
-          var img = el('img', 'cover');
-          if (it.coverUrl) { img.src = it.coverUrl; img.onerror = coverFallback; }
-          else img.style.background = 'linear-gradient(135deg,#ff6b3d,#ff3d2e)';
-          var rm = el('button', 'remove', '✕');
-          rm.dataset.remove = it.bookId;
-          var title = el('div', 'title', it.title || it.bookId);
-          if (it.lastReadChapterTitle) {
-            var rd = el('div', 'reading', '读到：' + it.lastReadChapterTitle);
-            item.appendChild(rm);
-            item.appendChild(img);
-            item.appendChild(title);
-            item.appendChild(rd);
-          } else {
-            var meta = el('div', 'meta', it.author || '');
-            item.appendChild(rm);
-            item.appendChild(img);
-            item.appendChild(title);
-            item.appendChild(meta);
-          }
-          grid.appendChild(item);
-        });
-      } else {
-        grid.appendChild(el('div', 'empty', '书架为空，在书城或搜索中添加书籍'));
-      }
-      view.appendChild(grid);
-      if (state.loggedIn) {
-        view.appendChild(el('div', 'section-title', '云端书架'));
-        var grid2 = el('div', 'shelf-grid');
-        if (state.shelfRemote.length) {
-          state.shelfRemote.forEach(function (it) {
-            var item = el('div', 'shelf-item');
-            // 整块可点
-            item.dataset.bookId = it.book_id;
-            item.dataset.itemId = it.last_read_item_id || '';
-            item.dataset.action = 'open';
-            item.title = '点击继续阅读';
-            var img = el('img', 'cover');
-            if (it.cover_url) { img.src = it.cover_url; img.onerror = coverFallback; }
-            else img.style.background = 'linear-gradient(135deg,#888,#aaa)';
-            var t = el('div', 'title', it.title || it.book_id);
-            item.appendChild(img);
-            item.appendChild(t);
-            if (it.current_chapter_title) {
-              var rd = el('div', 'reading', '读到：' + it.current_chapter_title);
-              item.appendChild(rd);
-            } else if (it.author) {
-              item.appendChild(el('div', 'meta', it.author));
-            }
-            grid2.appendChild(item);
-          });
-        } else {
-          grid2.appendChild(el('div', 'empty', '云端书架为空'));
-        }
-        view.appendChild(grid2);
-      } else {
-        view.appendChild(el('div', 'section-title', '云端书架'));
-        view.appendChild(el('div', 'empty', '登录后可同步云端书架'));
-      }
+      view.appendChild(renderShelfTabs());
+      view.appendChild(renderShelfContent());
     }).catch(function (e) {
       view.innerHTML = '';
       view.appendChild(errBox(e.message));
     });
+  }
+
+  /** 当前应展示的书架 tab（登录=remote，未登录=local） */
+  function getActiveShelfTab() {
+    if (state.shelfTab === 'remote' && !state.loggedIn) return 'local';
+    if (state.shelfTab === 'local' || state.shelfTab === 'remote') return state.shelfTab;
+    return state.loggedIn ? 'remote' : 'local';
+  }
+
+  /** 顶部 tabs —— 登录时显示 [云端 | 本地]；未登录只显示 [本地] */
+  function renderShelfTabs() {
+    var wrap = el('div', 'shelf-tabs');
+    var localBtn = el('button', 'shelf-tab' + (getActiveShelfTab() === 'local' ? ' active' : ''), '本地书架');
+    localBtn.id = 'shelfTabLocal';
+    wrap.appendChild(localBtn);
+    if (state.loggedIn) {
+      var remoteBtn = el('button', 'shelf-tab' + (getActiveShelfTab() === 'remote' ? ' active' : ''), '云端书架');
+      remoteBtn.id = 'shelfTabRemote';
+      wrap.appendChild(remoteBtn);
+    }
+    return wrap;
+  }
+
+  /** 当前 tab 下的内容区 */
+  function renderShelfContent() {
+    var active = getActiveShelfTab();
+    if (active === 'remote') return renderShelfRemoteGrid();
+    return renderShelfLocalGrid();
+  }
+
+  /** 单本"读到：xxx" 行：有进度=红色已读；无进度=灰黑色"未读" */
+  function renderReadingLine(lastChapterTitle, hasRead) {
+    var node;
+    if (hasRead && lastChapterTitle) {
+      node = el('div', 'reading read', '已读到：' + lastChapterTitle);
+    } else {
+      node = el('div', 'reading unread', '未读');
+    }
+    return node;
+  }
+
+  function renderShelfLocalGrid() {
+    var grid = el('div', 'shelf-grid');
+    if (!state.shelfLocal.length) {
+      grid.appendChild(el('div', 'empty', '书架为空，在书城或搜索中添加书籍'));
+      return grid;
+    }
+    state.shelfLocal.forEach(function (it) {
+      var item = el('div', 'shelf-item');
+      item.dataset.bookId = it.bookId;
+      item.dataset.itemId = it.lastReadItemId || '';
+      item.dataset.action = 'open';
+      item.title = '点击继续阅读';
+      var img = el('img', 'cover');
+      if (it.coverUrl) { img.src = it.coverUrl; img.onerror = coverFallback; }
+      else img.style.background = 'linear-gradient(135deg,#ff6b3d,#ff3d2e)';
+      var rm = el('button', 'remove', '✕');
+      rm.dataset.remove = it.bookId;
+      var title = el('div', 'title', it.title || it.bookId);
+      var hasRead = !!(it.lastReadChapterTitle || it.lastReadItemId);
+      var line = renderReadingLine(it.lastReadChapterTitle, hasRead);
+      item.appendChild(rm);
+      item.appendChild(img);
+      item.appendChild(title);
+      item.appendChild(line);
+      grid.appendChild(item);
+    });
+    return grid;
+  }
+
+  function renderShelfRemoteGrid() {
+    var grid = el('div', 'shelf-grid');
+    if (!state.loggedIn) {
+      grid.appendChild(el('div', 'empty', '登录后可同步云端书架'));
+      return grid;
+    }
+    if (!state.shelfRemote.length) {
+      grid.appendChild(el('div', 'empty', '云端书架为空'));
+      return grid;
+    }
+    state.shelfRemote.forEach(function (it) {
+      var item = el('div', 'shelf-item');
+      item.dataset.bookId = it.book_id;
+      item.dataset.itemId = it.last_read_item_id || '';
+      item.dataset.action = 'open';
+      item.title = '点击继续阅读';
+      var img = el('img', 'cover');
+      if (it.cover_url) { img.src = it.cover_url; img.onerror = coverFallback; }
+      else img.style.background = 'linear-gradient(135deg,#888,#aaa)';
+      var title = el('div', 'title', it.title || it.book_id);
+      var hasRead = !!(it.current_chapter_title || it.last_read_item_id);
+      var line = renderReadingLine(it.current_chapter_title, hasRead);
+      item.appendChild(img);
+      item.appendChild(title);
+      item.appendChild(line);
+      grid.appendChild(item);
+    });
+    return grid;
   }
 
   /* ---------------- 登录 / 个人信息 ---------------- */
@@ -1417,6 +1449,12 @@
       if (IS_SIDEBAR) { openBookInEditor(row.dataset.bookId); } else { showBookModal(row.dataset.bookId); }
       return;
     }
+    // 书架 tab 切换
+    if (t.id === 'shelfTabLocal' || t.id === 'shelfTabRemote') {
+      state.shelfTab = t.id === 'shelfTabLocal' ? 'local' : 'remote';
+      renderShelf($('#view'));
+      return;
+    }
     // 书架：.shelf-item 整块可点（沉浸下也要可读）
     var shelfItem = t.closest ? t.closest('.shelf-item') : null;
     if (shelfItem && state.view === 'shelf') {
@@ -1750,6 +1788,8 @@
     if (m.type === 'login-changed') {
       state.user = m.user;
       state.loggedIn = !!m.loggedIn;
+      // 登出后强制把 tab 拉回 local，避免登入时还在 remote 但本地缓存陈旧
+      if (!state.loggedIn) state.shelfTab = 'local';
       saveState();
       render();
       if (state.view === 'shelf') renderShelf($('#view'));
