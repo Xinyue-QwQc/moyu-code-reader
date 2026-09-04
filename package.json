@@ -2,7 +2,7 @@
   "name": "fanqie-novel",
   "displayName": "番茄小说",
   "description": "🍅 番茄小说阅读器：在 VS Code 里直接阅读番茄小说：抖音扫码登录、书城（排行榜/分类）、搜索、书架、历史记录、沉浸式阅读器（上下翻页/字号主题/工具栏显隐）、书评。",
-  "version": "2026.8.240",
+  "version": "2028.8.223",
   "publisher": "zwb8926",
   "license": "MIT",
   "icon": "media/icon.png",
