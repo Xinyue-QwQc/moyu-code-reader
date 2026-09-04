@@ -1540,6 +1540,20 @@
 
     // 阅读器
     if (state.view === 'reader') {
+      // 主题切换 chips 优先处理（必须在 settingsPop 早返回之前，否则被拦截）
+      var themeChip = t.closest ? t.closest('[data-theme]') : null;
+      if (themeChip) {
+        state.settings.theme = themeChip.dataset.theme;
+        saveSettings();
+        applySettings(); // 只刷 CSS 变量，不重建 reader（settings-pop 挂 body，不闪不掉）
+        var chipBox = themeChip.parentNode;
+        if (chipBox && chipBox.querySelectorAll) {
+          chipBox.querySelectorAll('.chip').forEach(function (c) {
+            c.classList.toggle('active', c === themeChip);
+          });
+        }
+        return;
+      }
       // 抽屉/设置面板关闭按钮
       if (t.id === 'closeDrawer') {
         state.drawer = null;
@@ -1673,13 +1687,6 @@
       if (t.id === 'nextPage') { navPage(1); return; }
       if (t.id === 'prevChapter') { prevChapter(); return; }
       if (t.id === 'nextChapter') { nextChapter(); return; }
-      var themeChip = t.closest ? t.closest('[data-theme]') : null;
-      if (themeChip) {
-        state.settings.theme = themeChip.dataset.theme;
-        saveSettings();
-        renderReader();
-        return;
-      }
       // 点击正文：左右两侧翻页（沉浸式快速翻页）
       // 委托到 #readerContent：点中正文（无论 .page-wrap / .page / .para-click）即触发
       // 沉浸模式无"中间切工具栏"——中间点击无副作用
