@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as api from '../api/fanqie';
-import { chapterText, CHAPTER_EXTENSION, chaptersPerPage, isBookId, MAX_CHAPTERS_PER_PAGE, positionKey, ReadingPage, readingPage, READER_SCHEME, safeLabel } from './content';
+import { chapterText, CHAPTER_EXTENSION, chaptersPerPage, isBookId, MAX_CHAPTERS_PER_PAGE, paragraphSpacing, positionKey, ReadingPage, readingPage, READER_SCHEME, safeLabel } from './content';
 
-export interface ChapterAddress { bookId: string; itemId: string; itemIds: string[]; pageSize: number }
+export interface ChapterAddress { bookId: string; itemId: string; itemIds: string[]; pageSize: number; paragraphSpacing: number }
 
 export function chapterAddress(uri: vscode.Uri): ChapterAddress | undefined {
   if (uri.scheme !== READER_SCHEME || !uri.path.endsWith(CHAPTER_EXTENSION)) return;
@@ -10,20 +10,23 @@ export function chapterAddress(uri: vscode.Uri): ChapterAddress | undefined {
   const bookId = params.get('bookId') ?? '';
   const itemId = params.get('itemId') ?? '';
   const itemIds = params.has('itemIds') ? params.get('itemIds')!.split(',') : [itemId];
+  const spacing = params.has('paragraphSpacing') ? Number(params.get('paragraphSpacing')) : 0;
+  if (!Number.isInteger(spacing) || spacing < 0 || spacing > 5) return;
   const pageSize = params.has('pageSize') ? Number(params.get('pageSize')) : itemIds.length;
   if (!isBookId(bookId) || !isBookId(itemId) || itemIds[0] !== itemId || !itemIds.every(isBookId)) return;
   if (!itemIds.length || itemIds.length > MAX_CHAPTERS_PER_PAGE || new Set(itemIds).size !== itemIds.length) return;
   if (!Number.isInteger(pageSize) || pageSize < itemIds.length || pageSize > MAX_CHAPTERS_PER_PAGE) return;
-  return { bookId, itemId, itemIds, pageSize };
+  return { bookId, itemId, itemIds, pageSize, paragraphSpacing: spacing };
 }
 
-export function pageUri(bookId: string, chapters: api.ChapterData[], bookName?: string, count = chapters.length): vscode.Uri {
+export function pageUri(bookId: string, chapters: api.ChapterData[], bookName?: string, count = chapters.length, spacing = 0): vscode.Uri {
   const first = chapters[0];
   const last = chapters[chapters.length - 1];
   const title = chapters.length === 1 ? first.title : first.title + ' ～ ' + last.title;
   const query = new URLSearchParams({ bookId, itemId: first.itemId });
   if (chapters.length > 1) query.set('itemIds', chapters.map(chapter => chapter.itemId).join(','));
   if (count > 1) query.set('pageSize', String(chaptersPerPage(count)));
+  if (spacing > 0) query.set('paragraphSpacing', String(paragraphSpacing(spacing)));
   return vscode.Uri.from({
     scheme: READER_SCHEME,
     path: '/' + safeLabel(bookName || first.bookName, bookId) + '/' + safeLabel(title, first.itemId) + CHAPTER_EXTENSION,
@@ -98,7 +101,7 @@ export class ChapterFileSystem implements vscode.FileSystemProvider, vscode.Disp
     const address = chapterAddress(uri);
     if (!address) throw vscode.FileSystemError.FileNotFound(uri);
     const request = this.chapters(address.bookId, address.itemIds).then(chapters => {
-      const page = readingPage(chapters);
+      const page = readingPage(chapters, address.paragraphSpacing);
       this.pages.set(key, page);
       const openKeys = new Set(vscode.workspace.textDocuments.map(document => document.uri.toString()));
       for (const oldKey of this.pages.keys()) {

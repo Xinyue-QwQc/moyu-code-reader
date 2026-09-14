@@ -15,10 +15,10 @@ async function until(condition, label, timeout = 15000) {
   throw new Error('等待验证条件失败：' + label + (lastError ? '\n' + lastError.stack : ''));
 }
 
-async function connect(port) {
+async function connect(port, choose) {
   const target = await until(async () => {
     const targets = await (await fetch('http://127.0.0.1:' + port + '/json/list')).json();
-    return targets.find(target => target.type === 'page' && target.url.includes('workbench.html'));
+    return targets.find(choose || (target => target.type === 'page' && target.url.includes('workbench.html')));
   }, '独立 VS Code DevTools target');
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
@@ -36,11 +36,11 @@ async function connect(port) {
     if (message.error) request.reject(new Error(JSON.stringify(message.error)));
     else request.resolve(message.result);
   });
-  const send = (method, params = {}) => new Promise((resolve, reject) => {
+  const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
     const id = ++nextId;
     const timer = setTimeout(() => { pending.delete(id); reject(new Error('CDP response missing: ' + method)); }, 15000);
     pending.set(id, { resolve, reject, timer });
-    socket.send(JSON.stringify({ id, method, params }));
+    socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
   });
   const evaluate = async expression => {
     const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });

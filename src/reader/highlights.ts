@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { chapterAddress } from './documents';
-import { findKeywords, findQuotes, subtractSpans, TextSpan } from './quotes';
+import { findKeywords, findPageQuotes, findQuotes, subtractSpans, TextSpan } from './quotes';
+import type { ReadingPage } from './content';
 import { readingPalette, validColor } from './palette';
 
 type HighlightKind = 'dialogue' | 'innerQuotes' | 'keywords';
@@ -20,7 +21,7 @@ export class ReaderHighlights implements vscode.Disposable {
   private readonly states = new Map<string, HighlightState>();
   private readonly disposables: vscode.Disposable[];
 
-  constructor() {
+  constructor(private readonly page: (uri: vscode.Uri) => ReadingPage | undefined) {
     this.disposables = [
       vscode.window.onDidChangeVisibleTextEditors(editors => editors.forEach(editor => this.apply(editor))),
       vscode.workspace.onDidChangeConfiguration(event => {
@@ -64,7 +65,8 @@ export class ReaderHighlights implements vscode.Disposable {
     if (!state || state.signature !== signature || state.version !== editor.document.version) {
       this.remove(key);
       const text = editor.document.getText();
-      const quotes = findQuotes(text);
+      const page = this.page(editor.document.uri);
+      const quotes = page ? findPageQuotes(page) : findQuotes(text);
       const keywords = styles.keywords.enabled ? findKeywords(text, words) : [];
       const innerQuotes = styles.innerQuotes.enabled ? subtractSpans(quotes.innerQuotes, keywords) : [];
       const dialogue = styles.dialogue.enabled ? subtractSpans(quotes.dialogue, [...innerQuotes, ...keywords]) : [];

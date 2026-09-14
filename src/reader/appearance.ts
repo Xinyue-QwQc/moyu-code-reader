@@ -3,7 +3,7 @@ import { READER_LANGUAGE } from './content';
 import { validColor } from './palette';
 
 type FontOption = 'fontFamily' | 'fontSize' | 'lineHeight';
-const fontLabels: Record<FontOption, string> = { fontFamily: '字体', fontSize: '字号', lineHeight: '行高' };
+const fontLabels: Record<FontOption, string> = { fontFamily: '字体', fontSize: '字号', lineHeight: '行间距（行高）' };
 const paletteLabels: Record<string, string> = { theme: '跟随主题', soft: '柔和', warm: '暖色', cool: '冷色' };
 
 function fontConfig(uri?: vscode.Uri) {
@@ -96,6 +96,12 @@ export async function showReaderAppearance(uri?: vscode.Uri): Promise<void> {
       ...(['fontFamily', 'fontSize', 'lineHeight'] as const).map(option => ({
         label: fontLabels[option], description: fontDescription(option, uri), run: () => editFont(option, uri),
       })),
+      { label: '段间距', description: String(vscode.workspace.getConfiguration('fanqie.reader', uri).get('paragraphSpacing', 0)) + ' 个空行', run: async () => {
+        const picked = await vscode.window.showQuickPick([0, 1, 2, 3, 4, 5].map(value => ({ label: value === 0 ? '不额外空行（代码页默认）' : '段落之间空 ' + value + ' 行', value })), {
+          title: '段间距（独立于行间距）', placeHolder: '原生编辑器按空行分隔段落；自动换行形成的行仍使用行间距',
+        });
+        if (picked) await setOption('fanqie.reader', 'paragraphSpacing', picked.value, uri);
+      } },
       { label: '恢复字体跟随 VS Code', description: '保留代码字体及小说的其他设置', run: async () => {
         for (const option of ['fontFamily', 'fontSize', 'lineHeight'] as const) await setReaderFont(option, undefined, uri);
       } },
@@ -117,6 +123,8 @@ export async function showReaderAppearance(uri?: vscode.Uri): Promise<void> {
         for (const key of ['foreground', 'lineBackground']) await setOption('fanqie.reader.appearance', key, '', uri);
         for (const kind of ['dialogue', 'innerQuotes', 'keywords']) await setOption('fanqie.reader.highlight', kind + '.color', '', uri);
       } },
+      { label: 'AI 阅读上下文', description: '提供当前上下文给 Codex / 按需读取其他章节', leave: true,
+        run: () => Promise.resolve(vscode.commands.executeCommand('fanqie.agent.context')) },
       { label: '更多设置：高亮开关、强度、关键词', leave: true, run: () => Promise.resolve(vscode.commands.executeCommand('fanqie.reader.settings')) },
       { label: '原生小说语言设置', description: '自动换行、缩略图、字体等', leave: true, run: () => Promise.resolve(vscode.commands.executeCommand('workbench.action.openSettings', '@lang:' + READER_LANGUAGE)) },
     ];

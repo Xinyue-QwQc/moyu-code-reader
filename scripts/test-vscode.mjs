@@ -14,6 +14,7 @@ const runId = new Date().toISOString().replace(/[:.]/g, '-');
 const artifacts = path.join(root, '.test-data', 'run-' + runId);
 const workspace = path.join(artifacts, 'workspace');
 mkdirSync(workspace, { recursive: true });
+if (process.env.FANQIE_CODEX_EXTENSION) mkdirSync(path.join(artifacts, 'isolated-codex-home'), { recursive: true });
 writeFileSync(path.join(root, '.test-data', 'latest-run.json'), JSON.stringify({ artifacts, startedAt: new Date().toISOString() }, null, 2));
 writeFileSync(path.join(workspace, 'reference.json'), JSON.stringify({
   name: 'editor-layout-reference', version: '1.0.0',
@@ -68,17 +69,19 @@ exports.activate = async function () {
   await vscode.commands.executeCommand('workbench.action.quit');
 };
 `);
-for (const phase of process.env.FANQIE_LIVE_ONLY ? ['live'] : ['main', 'restore']) {
+for (const phase of process.env.FANQIE_CODEX_EXTENSION ? ['codex'] : process.env.FANQIE_LIVE_ONLY ? ['live'] : ['main', 'restore']) {
   const debugPort = await port();
   console.log('\n=== Real VS Code integration: ' + phase + ' ===');
   const exit = await new Promise((resolve, reject) => {
     const child = spawn(executable, [workspace,
       '--extensionDevelopmentPath=' + root, '--extensionDevelopmentPath=' + driver,
+      ...(process.env.FANQIE_CODEX_EXTENSION ? ['--extensionDevelopmentPath=' + process.env.FANQIE_CODEX_EXTENSION] : []),
       '--disable-telemetry', '--new-window', '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-workspace-trust',
       '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-features=CalculateNativeWinOcclusion',
       '--user-data-dir=' + path.join(artifacts, 'user-data'), '--extensions-dir=' + path.join(artifacts, 'extensions'),
       '--remote-debugging-port=' + debugPort,
     ], { windowsHide: true, env: { ...process.env,
+      ...(phase === 'codex' ? { CODEX_HOME: path.join(artifacts, 'isolated-codex-home') } : {}),
       FANQIE_TEST_PHASE: phase, FANQIE_TEST_ARTIFACTS: artifacts, FANQIE_TEST_DEBUG_PORT: String(debugPort),
     } });
     child.stdout.on('data', chunk => process.stdout.write(chunk));
@@ -90,4 +93,4 @@ for (const phase of process.env.FANQIE_LIVE_ONLY ? ['live'] : ['main', 'restore'
   const result = JSON.parse(readFileSync(path.join(artifacts, phase + '-completed.json'), 'utf8'));
   if (!result.passed) throw new Error(result.error);
 }
-console.log('\n' + (process.env.FANQIE_LIVE_ONLY ? 'Live native-reader smoke test passed. ' : 'Integration tests and restart restoration passed. ') + 'Evidence: ' + artifacts);
+console.log('\n' + (process.env.FANQIE_CODEX_EXTENSION ? 'Installed Codex attachment test passed (no model request). ' : process.env.FANQIE_LIVE_ONLY ? 'Live native-reader smoke test passed. ' : 'Integration tests and restart restoration passed. ') + 'Evidence: ' + artifacts);

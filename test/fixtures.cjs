@@ -27,20 +27,27 @@ const chapters = ITEMS.map((itemId, index) => ({
   chapterWordNumber: '8000', realChapterOrder: String(index + 1), serialCount: String(ITEMS.length), source: 'api',
 }));
 
+const OTHER_BOOK_ID = '9000000000000001000';
+const OTHER_ITEMS = ['9000000000000001001', '9000000000000001002'];
+const otherBook = { ...book, book_id: OTHER_BOOK_ID, book_name: '未打开的书 · 港口', serial_count: 2 };
+const otherChapters = OTHER_ITEMS.map((itemId, index) => ({ ...chapters[0], itemId, bookId: OTHER_BOOK_ID,
+  bookName: otherBook.book_name, title: '港口 第' + (index + 1) + '章', realChapterOrder: String(index + 1),
+  paragraphs: ['这是当前阅读页之外的另一本书。', '“船已经靠岸。”她说。', '另一章的独立内容。'] }));
+
 function installFixtures(api) {
   const calls = new Map();
   const failures = new Map();
   const gates = new Map();
   const mismatches = new Set();
-  api.getBookDetail = async id => { if (id !== BOOK_ID) throw new Error('未知测试书籍'); return { ...book }; };
-  api.getDirectory = async () => ({ bookId: BOOK_ID, volumes: [{ volume_name: '第一卷', chapters: chapters.map(c => ({ itemId: c.itemId, title: c.title, realChapterOrder: c.realChapterOrder })) }], allItemIds: ITEMS, chapterTotal: ITEMS.length });
+  api.getBookDetail = async id => { if (id === OTHER_BOOK_ID) return { ...otherBook }; if (id !== BOOK_ID) throw new Error('未知测试书籍'); return { ...book }; };
+  api.getDirectory = async (id = BOOK_ID) => ({ bookId: id, volumes: [{ volume_name: '第一卷', chapters: (id === OTHER_BOOK_ID ? otherChapters : chapters).map(c => ({ itemId: c.itemId, title: c.title, realChapterOrder: c.realChapterOrder })) }], allItemIds: id === OTHER_BOOK_ID ? OTHER_ITEMS : ITEMS, chapterTotal: id === OTHER_BOOK_ID ? OTHER_ITEMS.length : ITEMS.length });
   api.getChapter = async id => {
     calls.set(id, (calls.get(id) || 0) + 1);
     if (gates.has(id)) await gates.get(id).promise;
     if (failures.get(id)) { failures.set(id, failures.get(id) - 1); throw new Error('测试网络暂时不可用'); }
-    const chapter = chapters.find(c => c.itemId === id);
+    const chapter = [...chapters, ...otherChapters].find(c => c.itemId === id);
     if (!chapter) throw new Error('未知测试章节');
-    return { ...chapter, bookId: mismatches.has(id) ? '8999999999999999999' : BOOK_ID, paragraphs: [...chapter.paragraphs] };
+    return { ...chapter, bookId: mismatches.has(id) ? '8999999999999999999' : chapter.bookId, paragraphs: [...chapter.paragraphs] };
   };
   api.getUserInfo = async () => null;
   api.getRemoteBookshelf = async () => [];
@@ -48,7 +55,7 @@ function installFixtures(api) {
   api.getRankCategories = async () => [{ id: 'all', name: '全部', group: ['male', 'female'] }];
   api.getRankList = async () => ({ book_list: [{ bookId: BOOK_ID, bookName: book.book_name, author: book.author, abstract: book.abstract, thumbUri: cover, readCount: '0', currentPos: 1, rankPosDiff: 0, lastChapterTitle: book.last_chapter_title }], total_num: 1, rankTypeText: '测试榜单' });
   api.getEditorList = async () => [];
-  api.searchBooks = async () => ({ books: [], total: 0 });
+  api.searchBooks = async () => ({ books: [otherBook], total: 1 });
   api.collectBookCommentLinks = async () => [{ bookId: BOOK_ID, commentId: '9000000000000000011' }];
   api.getBookComment = async () => ({ comment_id: '9000000000000000011', user_id: '0', nick_name: '测试读者', avatar: '', text: '正文由原生编辑器显示，书评只在书城中出现。', create_time: 0, digg_count: 0, reply_count: 0, score: 9 });
   api.updateReadProgress = async () => {};
@@ -62,4 +69,4 @@ function installFixtures(api) {
     },
   };
 }
-module.exports = { BOOK_ID, ITEMS, book, chapters, installFixtures };
+module.exports = { BOOK_ID, ITEMS, book, chapters, OTHER_BOOK_ID, OTHER_ITEMS, otherChapters, installFixtures };

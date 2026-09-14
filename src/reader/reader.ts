@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import * as api from '../api/fanqie';
 import { getLocalShelf, getReadHistory, getUser, setLocalShelf, setReadHistory } from '../net/store';
-import { chapterProgress, chaptersPerPage, flattenDirectory, isBookId, pageChapterIds, positionKey, READER_LANGUAGE, READER_SCHEME, SavedPosition, sectionAtLine } from './content';
+import { canonicalLine, chapterProgress, chaptersPerPage, displayLine, paragraphSpacing, flattenDirectory, isBookId, pageChapterIds, positionKey, READER_LANGUAGE, READER_SCHEME, SavedPosition, sectionAtLine } from './content';
 import { chapterAddress, ChapterFileSystem, pageUri } from './documents';
 import { ReaderHighlights } from './highlights';
 import { showReaderAppearance } from './appearance';
+import type { AgentReadingContext } from '../agent/types';
 
 const POSITIONS_KEY = 'fanqie.nativeReader.positions.v1';
 interface Book { info?: api.BookInfo; chapters: api.ChapterItem[]; loadedAt: number }
@@ -17,7 +18,7 @@ interface ReaderActions {
 
 export class NativeReader implements vscode.Disposable {
   private readonly files = new ChapterFileSystem();
-  private readonly highlights = new ReaderHighlights();
+  private readonly highlights = new ReaderHighlights(uri => this.files.peekPage(uri));
   private readonly disposables: vscode.Disposable[] = [];
   private readonly books = new Map<string, Book>();
   private readonly pendingBooks = new Map<string, Promise<Book>>();
@@ -32,6 +33,7 @@ export class NativeReader implements vscode.Disposable {
   private openSequence = 0;
   private navigating = false;
   private disposed = false;
+  private lastAgentContext: AgentReadingContext | undefined;
   private previousEditor: vscode.TextEditor | undefined;
   private readonly menu: vscode.StatusBarItem;
   private readonly previous: vscode.StatusBarItem;
@@ -64,7 +66,7 @@ export class NativeReader implements vscode.Disposable {
     this.catalog = status('fanqie.reader.catalog', 112, '$(list-ordered) 目录', '章节目录 / 阅读进度', 'fanqie.reader.catalog');
     this.next = status('fanqie.reader.next', 111, '$(chevron-right)', '下一页（Ctrl+Alt+PageDown）', 'fanqie.reader.nextChapter');
     this.pageCount = status('fanqie.reader.pageSize', 110, '$(files) 每页 1 章', '设置一个虚拟文件合并展示几章', 'fanqie.reader.pageSize');
-    this.settings = status('fanqie.reader.settings', 109, '$(settings-gear) 设置', '阅读设置：每页章节数、字体、行距、配色、高亮与缩略图', 'fanqie.reader.appearance');
+    this.settings = status('fanqie.reader.settings', 109, '$(settings-gear) 设置', '阅读设置：每页章节数、字体、行间距、段间距、配色、高亮与缩略图', 'fanqie.reader.appearance');
     const register = (command: string, action: (...args: any[]) => unknown) => this.disposables.push(
       vscode.commands.registerCommand(command, async (...args: any[]) => {
         try { return await action(...args); }
@@ -80,7 +82,7 @@ export class NativeReader implements vscode.Disposable {
     register('fanqie.reader.toggleHighlight', () => this.toggleHighlight());
     this.disposables.push(
       vscode.window.onDidChangeActiveTextEditor(editor => {
-        if (this.previousEditor) this.savePosition(this.previousEditor);
+        if (this.previousEditor) { this.savePosition(this.previousEditor); this.captureAgentContext(this.previousEditor); }
         this.previousEditor = editor;
         this.refreshStatus();
         if (editor && chapterAddress(editor.document.uri)) void this.activated(editor);
@@ -90,11 +92,11 @@ export class NativeReader implements vscode.Disposable {
         this.savePosition(event.textEditor);
         if (event.textEditor === vscode.window.activeTextEditor) { this.refreshStatus(); this.recordVisibleChapter(event.textEditor); }
       }),
-      vscode.window.onDidChangeTextEditorSelection(event => this.savePosition(event.textEditor)),
+      vscode.window.onDidChangeTextEditorSelection(event => { this.savePosition(event.textEditor); this.captureAgentContext(event.textEditor); }),
       vscode.workspace.onDidChangeConfiguration(event => {
         const editor = vscode.window.activeTextEditor;
         const address = editor && chapterAddress(editor.document.uri);
-        if (editor && address && event.affectsConfiguration('fanqie.reader.chaptersPerPage', editor.document.uri)) {
+        if (editor && address && (event.affectsConfiguration('fanqie.reader.chaptersPerPage', editor.document.uri) || event.affectsConfiguration('fanqie.reader.paragraphSpacing', editor.document.uri))) {
           const section = this.currentSection(editor);
           this.savePosition(editor);
           const oldTab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -102,7 +104,7 @@ export class NativeReader implements vscode.Disposable {
             const current = vscode.window.activeTextEditor;
             if (oldTab && vscode.window.tabGroups.all.some(group => group.tabs.includes(oldTab)) && current && current.document.uri.toString() !== editor.document.uri.toString()
               && chapterAddress(current.document.uri)?.bookId === address.bookId) await vscode.window.tabGroups.close(oldTab, true);
-          }).catch(error => { void vscode.window.showErrorMessage('调整每页章节数失败：' + this.errorText(error)); });
+          }).catch(error => { void vscode.window.showErrorMessage('调整阅读布局失败：' + this.errorText(error)); });
         }
         this.refreshStatus();
       }),
@@ -158,7 +160,7 @@ export class NativeReader implements vscode.Disposable {
       const ids = pageChapterIds(book.chapters, itemId, count);
       const chapters = await this.files.chapters(bookId, ids);
       if (this.disposed || sequence !== this.openSequence) return;
-      const uri = pageUri(bookId, chapters, book.info?.book_name, count);
+      const uri = pageUri(bookId, chapters, book.info?.book_name, count, paragraphSpacing(vscode.workspace.getConfiguration('fanqie.reader').get('paragraphSpacing', 0)));
       const page = await this.files.page(uri);
       const section = page.sections.find(section => section.itemId === itemId)!;
       const targetChapter = chapters.find(chapter => chapter.itemId === itemId)!;
@@ -169,7 +171,7 @@ export class NativeReader implements vscode.Disposable {
         if (this.disposed || sequence !== this.openSequence) return;
         const editor = await vscode.window.showTextDocument(document, { preview: false, viewColumn: vscode.ViewColumn.Active });
         if (this.disposed || sequence !== this.openSequence) return;
-        const relative = (line: number) => section.startLine + Math.min(section.endLine - section.startLine, Math.max(0, line || 0));
+        const relative = (line: number) => displayLine(section, Math.max(0, line || 0));
         const cursor = document.validatePosition(new vscode.Position(relative(saved?.line ?? 0), Math.max(0, saved?.character ?? 0)));
         const top = document.validatePosition(new vscode.Position(relative(saved?.topLine ?? 0), Math.max(0, saved?.topCharacter ?? 0)));
         // Retain native view state where possible (including split editors and soft-wrap pixel offsets).
@@ -295,6 +297,7 @@ export class NativeReader implements vscode.Disposable {
     const address = editor && chapterAddress(editor.document.uri);
     const items = [this.menu, this.previous, this.catalog, this.next, this.pageCount, this.settings];
     if (!editor || !address) { items.forEach(item => item.hide()); return; }
+    this.captureAgentContext(editor);
     const page = this.files.peekPage(editor.document.uri);
     const section = this.currentSection(editor);
     const chapter = page?.chapters.find(chapter => chapter.itemId === section?.itemId);
@@ -321,9 +324,9 @@ export class NativeReader implements vscode.Disposable {
     const cursor = editor.selection.active;
     const cursorHere = cursor.line >= section.startLine && cursor.line <= section.endLine;
     this.positions[positionKey(address.bookId, section.itemId)] = {
-      line: (cursorHere ? cursor.line : top.line) - section.startLine,
+      line: canonicalLine(section, cursorHere ? cursor.line : top.line),
       character: cursorHere ? cursor.character : top.character,
-      topLine: top.line - section.startLine, topCharacter: top.character, updatedAt: Date.now(),
+      topLine: canonicalLine(section, top.line), topCharacter: top.character, updatedAt: Date.now(),
     };
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => { void this.flush().catch(error => console.warn('[fanqie positions]', error)); }, 300);
@@ -365,7 +368,45 @@ export class NativeReader implements vscode.Disposable {
     return this.progressWrites;
   }
 
+  /** Read-only data access for extension tools; it never opens tabs or modifies reading history. */
+  getAgentContext(): AgentReadingContext | undefined {
+    const editor = vscode.window.activeTextEditor;
+    if (editor) this.captureAgentContext(editor);
+    return this.lastAgentContext && { ...this.lastAgentContext,
+      active: !!editor && editor.document.uri.toString() === this.lastAgentContext.uri && !!chapterAddress(editor.document.uri) };
+  }
+
+  async getAgentDirectory(bookId: string): Promise<{ title: string; chapters: api.ChapterItem[] }> {
+    if (!isBookId(bookId)) throw new Error('无效的书籍 ID。');
+    const book = await this.book(bookId);
+    return { title: book.info?.book_name ?? bookId, chapters: book.chapters };
+  }
+
+  getAgentChapters(bookId: string, itemIds: string[]): Promise<api.ChapterData[]> { return this.files.chapters(bookId, itemIds); }
+
+  private captureAgentContext(editor: vscode.TextEditor): void {
+    if (editor.document.isClosed) return;
+    const address = chapterAddress(editor.document.uri);
+    const page = this.files.peekPage(editor.document.uri);
+    if (!address || !page) return;
+    const visible = editor.visibleRanges;
+    const start = Math.min(editor.document.lineCount - 1, visible[0]?.start.line ?? 0);
+    const end = Math.min(editor.document.lineCount - 1, visible[visible.length - 1]?.end.line ?? start);
+    const section = sectionAtLine(page.sections, start)!;
+    this.lastAgentContext = {
+      active: editor === vscode.window.activeTextEditor,
+      capturedAt: new Date().toISOString(), uri: editor.document.uri.toString(), bookId: address.bookId,
+      bookTitle: this.books.get(address.bookId)?.info?.book_name || page.chapters[0].bookName || address.bookId,
+      currentChapterId: section.itemId, currentChapterTitle: section.title,
+      chapters: page.sections.map(section => ({ itemId: section.itemId, title: section.title, startLine: section.startLine + 1, endLine: section.endLine + 1 })),
+      visible: { startLine: start + 1, endLine: end + 1, text: editor.document.getText(new vscode.Range(start, 0, end, editor.document.lineAt(end).text.length)) },
+      selection: { startLine: editor.selection.start.line + 1, endLine: editor.selection.end.line + 1, text: editor.document.getText(editor.selection) },
+      text: editor.document.getText(),
+    };
+  }
+
   async flush(): Promise<void> {
+    await this.configurationTask;
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined; }
     this.positions = Object.fromEntries(Object.entries(this.positions).sort(([, a], [, b]) => b.updatedAt - a.updatedAt).slice(0, 200));
     const snapshot = { ...this.positions };

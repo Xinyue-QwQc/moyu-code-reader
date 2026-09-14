@@ -1,10 +1,11 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const { spawn } = require('node:child_process');
 const path = require('node:path');
 const vscode = require('vscode');
-const { BOOK_ID, ITEMS, chapters, installFixtures } = require('./fixtures.cjs');
+const { BOOK_ID, ITEMS, chapters, OTHER_BOOK_ID, OTHER_ITEMS, otherChapters, installFixtures } = require('./fixtures.cjs');
 const { connect, until } = require('./devtools.cjs');
-const { chapterText, readingPage } = require('../out/reader/content');
+const { chapterText, readingPage, displayLine } = require('../out/reader/content');
 const { chapterUri, chapterAddress, pageUri, ChapterFileSystem } = require('../out/reader/documents');
 const api = require('../out/api/fanqie');
 const store = require('../out/net/store');
@@ -46,6 +47,47 @@ exports.run = async function run() {
     await vscode.commands.executeCommand('workbench.action.closePanel');
     await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
 
+    if (phase === 'codex') {
+      await reader.openBook(BOOK_ID, ITEMS[0]);
+      const codex = vscode.extensions.getExtension('openai.chatgpt');
+      assert.ok(codex, 'installed Codex extension must be included explicitly');
+      await check('reader attaches a real context file through the installed Codex command without submitting chat', async () => {
+        const file = await vscode.commands.executeCommand('fanqie.agent.attachCodex');
+        assert.ok(file && file.scheme === 'file');
+        assert.ok((await fs.readFile(file.fsPath, 'utf8')).includes('reader.cjs'));
+        report.evidence.codex = { version: codex.packageJSON.version, attachmentPath: file.fsPath,
+          command: 'chatgpt.addFileToThread', modelRequestSent: false };
+        const target = await until(async () => {
+          const targets = await devtools.send('Target.getTargets');
+          return targets.targetInfos.find(target => target.type === 'iframe' && target.url.includes('vscode-webview'));
+        }, 'Codex Webview 初始化');
+        const session = await devtools.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
+        await devtools.send('Runtime.enable', {}, session.sessionId);
+        const frame = await until(async () => {
+          const tree = await devtools.send('Page.getFrameTree', {}, session.sessionId);
+          return tree.frameTree.childFrames?.[0]?.frame;
+        }, 'Codex 内层内容框架');
+        const isolated = await devtools.send('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'fanqie-test-receipt' }, session.sessionId);
+        const evaluate = async expression => {
+          const result = await devtools.send('Runtime.evaluate', { expression, contextId: isolated.executionContextId, returnByValue: true }, session.sessionId);
+          if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+          return result.result.value;
+        };
+        const body = await until(() => evaluate('document.body.innerText.trim()'), 'Codex 登录页 / 聊天页渲染');
+        report.evidence.codexPage = body;
+        await evaluate("globalThis.__fanqieAttachments = []; window.addEventListener('message', event => { if (event.data?.type === 'add-context-file') globalThis.__fanqieAttachments.push(event.data.file); }); true");
+        await vscode.commands.executeCommand('fanqie.agent.attachCodex');
+        const received = await until(() => evaluate('globalThis.__fanqieAttachments[0]'), 'Codex 界面收到阅读上下文附件');
+        assert.equal(received.fsPath, file.fsPath);
+        assert.equal(received.label, 'current.md');
+        report.evidence.attachmentDeliveredToCodexWebview = true;
+        const targets = await (await fetch('http://127.0.0.1:' + process.env.FANQIE_TEST_DEBUG_PORT + '/json/list')).json();
+        report.evidence.targets = targets.map(target => ({ type: target.type, title: target.title, url: target.url }));
+        await devtools.screenshot(artifacts, 'codex-context-attachment');
+      });
+      return;
+    }
+
     if (phase === 'live') {
       await check('real public Fanqie chapter opens as a native readonly document', async () => {
         await reader.openBook('7576659101376072728', '7576659313758831128');
@@ -58,6 +100,17 @@ exports.run = async function run() {
         report.evidence.live = { title: editor.document.lineAt(0).text, lines: editor.document.lineCount, readonly: !vscode.workspace.fs.isWritableFileSystem('fanqie') };
         await rendered(editor.document.lineAt(0).text);
         await devtools.screenshot(artifacts, 'reader-live-public-chapter');
+      });
+      await check('plugin agent interface fetches a real non-displayed chapter without changing the visible page', async () => {
+        const currentUri = vscode.window.activeTextEditor.document.uri.toString();
+        const directory = await reader.agent.invoke('directory', { bookId: '7576659101376072728', limit: 3 });
+        const otherId = directory.chapters.find(chapter => chapter.itemId !== '7576659313758831128').itemId;
+        const content = await reader.agent.invoke('read', { bookId: '7576659101376072728', itemIds: [otherId], limit: 2000 });
+        assert.ok(content.text.length > 100);
+        assert.equal(content.chapters[0].itemId, otherId);
+        assert.equal(vscode.window.activeTextEditor.document.uri.toString(), currentUri);
+        assert.ok(!Array.from(content.text).some(char => char.codePointAt(0) >= 0xE000 && char.codePointAt(0) <= 0xF8FF));
+        report.evidence.liveAgentRead = { itemId: otherId, title: content.chapters[0].title, returnedCharacters: content.text.length, hasMore: content.hasMore };
       });
       return;
     }
@@ -434,6 +487,107 @@ exports.run = async function run() {
       assert.ok(editor.selection.active.line >= section.startLine);
       await until(() => editor.visibleRanges[0]?.start.line >= section.startLine, '跳转页内第三章');
       await devtools.screenshot(artifacts, 'reader-third-chapter-in-one-file');
+    });
+
+    await check('paragraph spacing is a separate setting that preserves text and canonical reading position', async () => {
+      await reader.openBook(BOOK_ID, ITEMS[1]);
+      const before = readingPage(chapters.slice(0, 3));
+      const start = before.sections[1].startLine;
+      let editor = vscode.window.activeTextEditor;
+      editor.selection = new vscode.Selection(start + 86, 4, start + 86, 4);
+      await scrollTo(start + 80);
+      await until(() => editor.visibleRanges[0]?.start.line === start + 80, '准备段间距变更');
+      await reader.flush();
+      await set('fanqie.reader.paragraphSpacing', 2);
+      await until(() => chapterAddress(vscode.window.activeTextEditor.document.uri)?.paragraphSpacing === 2, '独立段间距生效');
+      editor = vscode.window.activeTextEditor;
+      const spaced = readingPage(chapters.slice(0, 3), 2);
+      const section = spaced.sections[1];
+      assert.equal(editor.document.getText(), spaced.text);
+      assert.equal(editor.selection.active.line, displayLine(section, 86));
+      await until(() => editor.visibleRanges[0]?.start.line === displayLine(section, 80), '段间距修改后位置保持');
+      assert.equal((await devtools.editor()).lineHeight, '27px', 'line spacing remains independent');
+      await devtools.screenshot(artifacts, 'reader-paragraph-spacing');
+      await set('fanqie.reader.paragraphSpacing', 0);
+      await until(() => chapterAddress(vscode.window.activeTextEditor.document.uri)?.paragraphSpacing === 0, '恢复段间距');
+    });
+
+    await check('plugin-owned native agent tools are registered and return current editor context', async () => {
+      const names = ['fanqie_reading_context', 'fanqie_search_books', 'fanqie_book_directory', 'fanqie_read_chapters'];
+      for (const name of names) assert.ok(vscode.lm.tools.some(tool => tool.name === name), name);
+      const editor = vscode.window.activeTextEditor;
+      const line = editor.selection.active.line;
+      editor.selection = new vscode.Selection(line, 0, line, editor.document.lineAt(line).text.length);
+      const result = await vscode.lm.invokeTool('fanqie_reading_context', { input: { scope: 'selection' }, toolInvocationToken: undefined });
+      const context = JSON.parse(result.content[0].value);
+      assert.equal(context.available, true);
+      assert.equal(context.active, true);
+      assert.equal(context.bookId, BOOK_ID);
+      assert.equal(context.text, editor.document.getText(editor.selection));
+      assert.equal(context.scope, 'selection');
+    });
+
+    await check('agents can search, list and read a completely different unopened book without changing tabs or history', async () => {
+      await reader.flush();
+      const uri = vscode.window.activeTextEditor.document.uri.toString();
+      const history = await store.getReadHistory();
+      const search = await reader.agent.invoke('search', { query: '港口' });
+      assert.equal(search.books[0].bookId, OTHER_BOOK_ID);
+      const directory = await reader.agent.invoke('directory', { bookId: OTHER_BOOK_ID, limit: 1 });
+      assert.equal(directory.total, 2);
+      assert.equal(directory.nextOffset, 1);
+      assert.equal(directory.chapters[0].itemId, OTHER_ITEMS[0]);
+      const tool = await vscode.lm.invokeTool('fanqie_read_chapters', { input: { bookId: OTHER_BOOK_ID, startChapter: 2 }, toolInvocationToken: undefined });
+      const content = JSON.parse(tool.content[0].value);
+      assert.equal(content.text, chapterText(otherChapters[1]));
+      assert.equal(content.complete, true);
+      assert.equal(vscode.window.activeTextEditor.document.uri.toString(), uri);
+      await reader.flush();
+      // Native editor focus/layout events may refresh readAt while a tool runs. Only book/chapter state is invariant.
+      const readingState = items => items.map(({ readAt, ...state }) => state);
+      assert.deepEqual(readingState(await store.getReadHistory()), readingState(history));
+      const partial = await reader.agent.invoke('context', { scope: 'page', limit: 100 });
+      assert.equal(partial.hasMore, true);
+      assert.equal(partial.complete, false);
+      const continuation = await reader.agent.invoke('context', { scope: 'page', offset: partial.nextOffset, limit: 100 });
+      assert.equal(partial.text + continuation.text, vscode.window.activeTextEditor.document.getText().slice(0, 200));
+    });
+
+    await check('file-based agents get a real context file and can fetch unseen chapters through the bundled client', async () => {
+      const file = await reader.agent.contextFile();
+      assert.equal(file.scheme, 'file');
+      const text = await fs.readFile(file.fsPath, 'utf8');
+      assert.ok(text.includes(BOOK_ID));
+      assert.ok(text.includes('reader.cjs'));
+      assert.ok(text.includes('未展示章节'));
+      const client = path.join(path.dirname(file.fsPath), 'reader.cjs');
+      const result = await new Promise((resolve, reject) => {
+        const child = spawn('node', [client, 'read', '--book-id', OTHER_BOOK_ID, '--start-chapter', '1'], { windowsHide: true });
+        let output = '', error = '';
+        child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { error += data; });
+        child.on('error', reject); child.on('exit', code => code === 0 ? resolve(JSON.parse(output)) : reject(new Error(error)));
+      });
+      assert.equal(result.text, chapterText(otherChapters[0]));
+      const descriptor = JSON.parse(await fs.readFile(path.join(path.dirname(file.fsPath), 'bridge.json'), 'utf8'));
+      assert.ok(!text.includes(descriptor.token));
+      assert.ok(!text.includes('fanqie.cookies'));
+      report.evidence.agentBridge = { localFile: true, clientReadUnopenedBook: true, nativeToolNames: vscode.lm.tools.filter(tool => tool.name.startsWith('fanqie_')).map(tool => tool.name) };
+      const reference = await vscode.workspace.openTextDocument(path.join(artifacts, 'workspace', 'reference.json'));
+      await vscode.window.showTextDocument(reference, { preview: false });
+      const previous = await reader.agent.invoke('context', { scope: 'page', limit: 100 });
+      assert.equal(previous.active, false);
+      assert.equal(previous.bookId, BOOK_ID);
+      assert.ok(!previous.text.includes('editor-layout-reference'));
+      await reader.openBook(BOOK_ID, ITEMS[1]);
+    });
+
+    await check('AI access can be disabled without exposing stale context or mutating agent configuration', async () => {
+      const file = await reader.agent.contextFile();
+      await set('fanqie.reader.agent.enabled', false);
+      await assert.rejects(reader.agent.invoke('context'), /已关闭/);
+      await until(async () => { try { await fs.access(file.fsPath); return false; } catch { return true; } }, '关闭AI访问后删除本次上下文副本');
+      await set('fanqie.reader.agent.enabled', true);
+      assert.ok((await reader.agent.invoke('context')).available);
     });
 
     await check('persist a cursor and viewport for an independent cold-start verification', async () => {

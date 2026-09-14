@@ -5,12 +5,36 @@ export const READER_LANGUAGE = 'fanqie-novel';
 export const CHAPTER_EXTENSION = '.fanqie';
 export const MAX_CHAPTERS_PER_PAGE = 50;
 
-/** No fake code, pagination, reflow, or injected indentation: one paragraph per logical line. */
-export function chapterText(chapter: Pick<ChapterData, 'title' | 'paragraphs'>): string {
+export function paragraphSpacing(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) ? Math.max(0, Math.min(5, value)) : 0;
+}
+
+/** Blank lines are real native-editor lines; line height remains a separate language setting. */
+export function chapterLayout(chapter: Pick<ChapterData, 'title' | 'paragraphs'>, spacing = 0): { text: string; canonicalLines: number[] } {
   const normalize = (text: string) => text.replace(/\r\n?/g, '\n');
-  const body = chapter.paragraphs.map(normalize).join('\n');
-  if (!body.trim()) throw new Error('章节正文为空，请重试或在番茄官方平台检查章节权限。');
-  return normalize(chapter.title).trim() + '\n\n' + body + '\n';
+  const paragraphs = chapter.paragraphs.map(normalize);
+  if (!paragraphs.join('\n').trim()) throw new Error('章节正文为空，请重试或在番茄官方平台检查章节权限。');
+  const heading = (normalize(chapter.title).trim() + '\n').split('\n');
+  const lines = [...heading];
+  const canonicalLines = heading.map((_, index) => index);
+  let canonical = heading.length;
+  paragraphs.forEach((paragraph, index) => {
+    if (index) {
+      for (let gap = 0; gap < paragraphSpacing(spacing); gap++) {
+        lines.push('');
+        canonicalLines.push(Math.max(0, canonical - 1));
+      }
+    }
+    for (const line of paragraph.split('\n')) { lines.push(line); canonicalLines.push(canonical++); }
+  });
+  lines.push('');
+  canonicalLines.push(canonical);
+  return { text: lines.join('\n'), canonicalLines };
+}
+
+/** Canonical text (spacing=0) stays suitable for AI analysis and source quotations. */
+export function chapterText(chapter: Pick<ChapterData, 'title' | 'paragraphs'>, spacing = 0): string {
+  return chapterLayout(chapter, spacing).text;
 }
 
 export function safeLabel(value: string, fallback: string): string {
@@ -58,6 +82,7 @@ export interface ChapterSection {
   title: string;
   startLine: number;
   endLine: number;
+  canonicalLines: number[];
 }
 
 export interface ReadingPage {
@@ -80,15 +105,15 @@ export function pageChapterIds(chapters: readonly ChapterItem[], itemId: string,
 }
 
 /** A page is a single real document; blank lines separate complete, unmodified chapter texts. */
-export function readingPage(chapters: ChapterData[]): ReadingPage {
+export function readingPage(chapters: ChapterData[], spacing = 0): ReadingPage {
   if (!chapters.length) throw new Error('没有可展示的章节。');
   const sections: ChapterSection[] = [];
   const parts: string[] = [];
   let startLine = 0;
   for (const chapter of chapters) {
-    const text = chapterText(chapter);
+    const { text, canonicalLines } = chapterLayout(chapter, spacing);
     const lineCount = text.split('\n').length;
-    sections.push({ itemId: chapter.itemId, title: chapter.title, startLine, endLine: startLine + lineCount - 1 });
+    sections.push({ itemId: chapter.itemId, title: chapter.title, startLine, endLine: startLine + lineCount - 1, canonicalLines });
     parts.push(text);
     startLine += lineCount;
   }
@@ -98,4 +123,14 @@ export function readingPage(chapters: ChapterData[]): ReadingPage {
 export function sectionAtLine(sections: readonly ChapterSection[], line: number): ChapterSection | undefined {
   return sections.find(section => section.startLine <= line && section.endLine >= line)
     ?? (line < 0 ? sections[0] : sections[sections.length - 1]);
+}
+
+/** Save canonical positions so changing paragraph spacing does not lose a reader's place. */
+export function canonicalLine(section: ChapterSection, displayLine: number): number {
+  const index = Math.max(0, Math.min(section.canonicalLines.length - 1, displayLine - section.startLine));
+  return section.canonicalLines[index];
+}
+export function displayLine(section: ChapterSection, logicalLine: number): number {
+  const index = section.canonicalLines.indexOf(Math.max(0, logicalLine));
+  return section.startLine + (index >= 0 ? index : section.canonicalLines.length - 1);
 }

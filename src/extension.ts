@@ -6,8 +6,10 @@ import { FanqieSidebarProvider } from './webview/sidebar';
 import { broadcast, setOpenBookInEditorHandler } from './webview/router';
 import { NativeReader } from './reader/reader';
 import { chapterAddress } from './reader/documents';
+import { ReaderAgentAccess } from './agent/access';
 
 let reader: NativeReader | undefined;
+let agentAccess: ReaderAgentAccess | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   initStore(context);
@@ -18,7 +20,8 @@ export async function activate(context: vscode.ExtensionContext) {
     openComments: bookId => openBookInPanel(context, bookId, 'comments'),
     onProgressChanged: () => broadcast({ type: 'reading-progress-changed' }),
   });
-  context.subscriptions.push(reader);
+  agentAccess = new ReaderAgentAccess(context, reader);
+  context.subscriptions.push(reader, agentAccess);
   const nativeReader = reader;
   setOpenBookInEditorHandler((bookId, mode, itemId) => mode === 'reader'
     ? nativeReader.openBook(bookId, itemId)
@@ -62,11 +65,15 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeWindowState(() => void refreshStatus()),
     { dispose: disposePanel },
   );
-  return { openBook: (bookId: string, itemId?: string) => nativeReader.openBook(bookId, itemId), flush: () => nativeReader.flush() };
+  return { openBook: (bookId: string, itemId?: string) => nativeReader.openBook(bookId, itemId), flush: () => nativeReader.flush(),
+    agent: { invoke: (action: string, input?: unknown) => agentAccess!.service.invoke(action, input), contextFile: () => agentAccess!.contextFile() } };
 }
 
 export async function deactivate(): Promise<void> {
   setOpenBookInEditorHandler(undefined);
+  agentAccess?.dispose();
+  await agentAccess?.stop();
+  agentAccess = undefined;
   reader?.dispose();
   await reader?.flush();
   reader = undefined;

@@ -175,3 +175,42 @@ test('combined documents contain every complete chapter and track exact section 
   assert.equal(readingPage([chapters[0]]).text, chapterText(chapters[0]));
   assert.throws(() => readingPage([]), /没有可展示/);
 });
+
+const { chapterLayout, paragraphSpacing, canonicalLine, displayLine } = require('../out/reader/content');
+
+test('line height and paragraph spacing are independent, with a native zero-spacing default', () => {
+  const chapter = { title: '第一章', paragraphs: ['段落一', '段落二\n段内换行', '段落三'] };
+  assert.equal(chapterText(chapter, 0), '第一章\n\n段落一\n段落二\n段内换行\n段落三\n');
+  assert.equal(chapterText(chapter, 1), '第一章\n\n段落一\n\n段落二\n段内换行\n\n段落三\n');
+  assert.equal(chapterText(chapter, 2), '第一章\n\n段落一\n\n\n段落二\n段内换行\n\n\n段落三\n');
+  assert.equal(chapterLayout(chapter, 2).text.split('\n').length, chapterLayout(chapter).text.split('\n').length + 4);
+  for (const value of [undefined, '2', NaN, 1.2, -1]) assert.equal(paragraphSpacing(value), 0);
+  assert.equal(paragraphSpacing(8), 5);
+});
+
+test('canonical cursor positions survive every supported paragraph spacing value', () => {
+  const chapter = { itemId: 'a', title: '第一章', paragraphs: ['段落一', '段落二\n段内换行', '段落三'] };
+  for (let spacing = 0; spacing <= 5; spacing++) {
+    const page = readingPage([chapter, { ...chapter, itemId: 'b' }], spacing);
+    for (const section of page.sections) {
+      for (let line = 0; line < chapterText(chapter).split('\n').length; line++) {
+        const display = displayLine(section, line);
+        assert.equal(canonicalLine(section, display), line);
+        assert.equal(page.text.split('\n')[display], chapterText(chapter).split('\n')[line]);
+      }
+    }
+  }
+});
+
+const { findPageQuotes } = require('../out/reader/quotes');
+test('paragraph spacing does not interrupt cross-paragraph dialogue or leak quotes across chapters', () => {
+  const chapters = [
+    { itemId: 'a', title: '第一章', paragraphs: ['他说：“第一段', '第二段。”', '没有配对的“'] },
+    { itemId: 'b', title: '第二章', paragraphs: ['这一章只有关闭引号”', '「独立对话。」'] },
+  ];
+  for (const spacing of [0, 1, 3, 5]) {
+    const page = readingPage(chapters, spacing);
+    const quotes = findPageQuotes(page);
+    assert.deepEqual(slices(page.text, quotes.dialogue), ['“第一段' + '\n'.repeat(spacing + 1) + '第二段。”', '「独立对话。」']);
+  }
+});

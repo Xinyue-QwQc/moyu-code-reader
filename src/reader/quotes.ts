@@ -1,3 +1,5 @@
+import { chapterText, displayLine, ReadingPage } from './content';
+
 /** UTF-16 offsets match VS Code's document.positionAt, including text with emoji. */
 export interface TextSpan { start: number; end: number }
 export interface QuoteSpans { dialogue: TextSpan[]; innerQuotes: TextSpan[] }
@@ -67,5 +69,32 @@ export function subtractSpans(source: TextSpan[], exclusions: TextSpan[]): TextS
     }
     if (start < span.end) result.push({ start, end: span.end });
   }
+  return result;
+}
+
+/** Parse original paragraphs, then map offsets to a spaced page; presentation blanks aren't punctuation. */
+export function findPageQuotes(page: ReadingPage): QuoteSpans {
+  const lineStarts = (text: string) => {
+    const starts = [0];
+    for (let index = 0; index < text.length; index++) if (text[index] === '\n') starts.push(index + 1);
+    return starts;
+  };
+  const displayed = lineStarts(page.text);
+  const result: QuoteSpans = { dialogue: [], innerQuotes: [] };
+  page.chapters.forEach((chapter, index) => {
+    const source = chapterText(chapter);
+    const starts = lineStarts(source);
+    const section = page.sections[index];
+    const offset = (value: number) => {
+      let low = 0, high = starts.length - 1;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (starts[mid] <= value) low = mid; else high = mid - 1;
+      }
+      return displayed[displayLine(section, low)] + value - starts[low];
+    };
+    const quotes = findQuotes(source);
+    for (const kind of ['dialogue', 'innerQuotes'] as const) result[kind].push(...quotes[kind].map(span => ({ start: offset(span.start), end: offset(span.end) })));
+  });
   return result;
 }
