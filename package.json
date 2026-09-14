@@ -1,16 +1,16 @@
 {
   "name": "fanqie-novel",
-  "displayName": "番茄小说",
-  "description": "番茄小说原生阅读器：每页可合并多章，独立字体、行间距、段间距与配色；状态栏阅读设置和 AI 上下文，支持 agent 按需读取未展示章节，无需另配 Codex/MCP。",
-  "version": "2028.8.228",
+  "displayName": "码间摸鱼 · 番茄小说",
+  "description": "在 VS Code 原生编辑器里摸鱼读小说：代码伪装配色与彩色缩略图，多章续读，选中文字发送到 Codex，按需交接阅读上下文。基于番茄小说扩展的个人增强分支。",
+  "version": "2028.8.229",
   "publisher": "zwb8926",
   "license": "MIT",
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zwb8926/fanqie-novel-vscode.git"
+    "url": "https://github.com/Xinyue-QwQc/moyu-code-reader.git"
   },
-  "homepage": "https://github.com/zwb8926/fanqie-novel-vscode",
+  "homepage": "https://github.com/Xinyue-QwQc/moyu-code-reader",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -18,14 +18,14 @@
     "Other"
   ],
   "keywords": [
+    "moyu",
+    "摸鱼",
     "fanqie",
-    "novel",
     "番茄小说",
     "reader",
-    "reading",
-    "小说",
-    "book",
-    "reader"
+    "code-camouflage",
+    "codex",
+    "reading-context"
   ],
   "activationEvents": [
     "onFileSystem:fanqie",
@@ -709,7 +709,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "prepackage": "node scripts/check-version.mjs && node scripts/clean-vsix.mjs",
-    "package": "vsce package --no-dependencies --allow-missing-repository",
+    "package": "vsce package --no-dependencies --allow-missing-repository --githubBranch moyu-codex",
     "pretest": "npm run compile",
     "test": "node --test test/*.test.cjs",
     "test:integration": "npm run compile && node scripts/test-vscode.mjs"
@@ -720,5 +720,8 @@
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.2",
     "typescript": "^5.5.0"
+  },
+  "bugs": {
+    "url": "https://github.com/Xinyue-QwQc/moyu-code-reader/issues"
   }
 }

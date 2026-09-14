@@ -5,3 +5,6 @@ out/
 .vscode/
 .test-data/
 .vscode-test/
+
+# Local collaboration notes are not product source.
+PROJECT_MEMORY.md
