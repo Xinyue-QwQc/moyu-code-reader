@@ -93,7 +93,7 @@ test('manifest exposes every highlight option and never overrides native editor 
   const manifest = require('../package.json');
   assert.ok(manifest.activationEvents.includes('onFileSystem:fanqie'));
   assert.ok(manifest.contributes.languages.some(language => language.id === 'fanqie-novel'));
-  assert.deepEqual(manifest.contributes.configurationDefaults, { '[fanqie-novel]': { 'editor.minimap.enabled': true } });
+  assert.deepEqual(manifest.contributes.configurationDefaults, { '[fanqie-novel]': { 'editor.minimap.enabled': true, 'editor.semanticHighlighting.enabled': true } });
   const properties = manifest.contributes.configuration.properties;
   for (const kind of ['dialogue', 'innerQuotes', 'keywords']) {
     for (const suffix of ['enabled', 'color', 'opacity']) assert.ok(properties['fanqie.reader.highlight.' + kind + '.' + suffix]);

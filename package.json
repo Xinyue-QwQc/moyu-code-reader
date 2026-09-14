@@ -2,7 +2,7 @@
   "name": "fanqie-novel",
   "displayName": "番茄小说",
   "description": "番茄小说原生阅读器：每页可合并多章，独立字体、行间距、段间距与配色；状态栏阅读设置和 AI 上下文，支持 agent 按需读取未展示章节，无需另配 Codex/MCP。",
-  "version": "2028.8.225",
+  "version": "2028.8.226",
   "publisher": "zwb8926",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -129,6 +129,11 @@
         "command": "fanqie.agent.openContext",
         "title": "番茄小说：打开 AI 阅读上下文文件",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "fanqie.reader.camouflage",
+        "title": "番茄小说：实验性代码伪装配色",
+        "icon": "$(beaker)"
       }
     ],
     "keybindings": [
@@ -204,6 +209,9 @@
         },
         {
           "command": "fanqie.agent.openContext"
+        },
+        {
+          "command": "fanqie.reader.camouflage"
         }
       ]
     },
@@ -357,6 +365,22 @@
           "default": true,
           "scope": "window",
           "markdownDescription": "由阅读插件提供只读 AI 上下文、书籍搜索、目录及未展示章节访问。兼容 VS Code 原生工具的 agent 可直接调用；Codex 用状态栏「AI → 提供当前上下文」添加本地文件附件，无需配置 MCP 或改 Codex 设置。使用仅监听 127.0.0.1 的带鉴权本地桥接，不自动提交聊天，不返回 Cookie 等凭证。关闭后停止桥接并删除当前会话的上下文副本。仅在受信任工作区启用。"
+        },
+        "fanqie.reader.experimental.codeCamouflage": {
+          "type": "string",
+          "enum": [
+            "off",
+            "balanced",
+            "dense"
+          ],
+          "default": "off",
+          "scope": "resource",
+          "enumDescriptions": [
+            "关闭实验，沿用现有正文 / 对话 / 关键词颜色。",
+            "平衡：叙述按词组分配代码语法色，对话保留整体字符串色。",
+            "强伪装：更短的词组，叙述与对话都强制多色。阅读舒适度会降低。"
+          ],
+          "markdownDescription": "**实验性，默认关闭。** 用确定性的词组分段模拟属性、函数、类型、关键字、字符串、数字、注释与标点颜色；不是实际语义分析。不添加代码符号、不改正文、字体、行段间距、背景或其他代码文件。开启时临时接管自动对白和正文前景色；手动关键词仍优先，关闭后原设置立即恢复。颜色复用当前代码主题，原生缩略图同步。高亮总开关关闭时暂停。状态栏「设置 → 实验性代码伪装配色」可直接切换。"
         }
       }
     },
@@ -394,7 +418,8 @@
     ],
     "configurationDefaults": {
       "[fanqie-novel]": {
-        "editor.minimap.enabled": true
+        "editor.minimap.enabled": true,
+        "editor.semanticHighlighting.enabled": true
       }
     },
     "languageModelTools": [
@@ -546,6 +571,38 @@
           },
           "required": [],
           "additionalProperties": false
+        }
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "fanqie-novel",
+        "scopes": {
+          "property": [
+            "variable.other.property",
+            "support.type.property-name.json"
+          ],
+          "string": [
+            "string.quoted.double"
+          ],
+          "keyword": [
+            "keyword.control"
+          ],
+          "function": [
+            "entity.name.function"
+          ],
+          "type": [
+            "entity.name.type"
+          ],
+          "number": [
+            "constant.numeric"
+          ],
+          "comment": [
+            "comment.line"
+          ],
+          "operator": [
+            "keyword.operator"
+          ]
         }
       }
     ]

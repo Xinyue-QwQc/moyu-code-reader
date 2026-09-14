@@ -62,8 +62,27 @@ async function connect(port, choose) {
           letterSpacing: style.letterSpacing, background: background ? getComputedStyle(background).backgroundColor : '',
           hasMinimap: !!editor.querySelector('.minimap')?.getBoundingClientRect().width, hasLineNumbers: !!editor.querySelector('.line-numbers'),
           lines: [...lines.querySelectorAll('.view-line')].map(el => el.textContent.split(String.fromCharCode(160)).join(' ')),
-          spans: [...lines.querySelectorAll('.view-line span')].filter(el => el.textContent).map(el => ({ text: el.textContent, color: getComputedStyle(el).color, opacity: getComputedStyle(el).opacity })),
+          spans: [...lines.querySelectorAll('.view-line span')].filter(el => el.textContent && !el.querySelector('span')).map(el => ({ text: el.textContent, color: getComputedStyle(el).color, opacity: getComputedStyle(el).opacity })),
         };
+      })()`);
+    },
+    async minimapColors() {
+      return evaluate(`(() => {
+        const editor = [...document.querySelectorAll('.monaco-editor')].find(el => el.getBoundingClientRect().width > 100 && el.querySelector('.view-line'));
+        if (!editor) return [];
+        const colors = new Map();
+        for (const canvas of editor.querySelectorAll('.minimap canvas')) {
+          const context = canvas.getContext('2d');
+          if (!context || !canvas.width || !canvas.height) continue;
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          for (let index = 0; index < pixels.length; index += 4) {
+            const r = pixels[index], g = pixels[index + 1], b = pixels[index + 2];
+            if (pixels[index + 3] < 30 || Math.max(r, g, b) - Math.min(r, g, b) < 18) continue;
+            const color = [Math.round(r / 24), Math.round(g / 24), Math.round(b / 24)].join(',');
+            colors.set(color, (colors.get(color) || 0) + 1);
+          }
+        }
+        return [...colors].filter(([, count]) => count >= 8).sort((a, b) => b[1] - a[1]);
       })()`);
     },
     async screenshot(directory, name) {

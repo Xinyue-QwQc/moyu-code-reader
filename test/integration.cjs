@@ -26,7 +26,7 @@ exports.run = async function run() {
   const scrollTo = async line => {
     const editor = vscode.window.activeTextEditor;
     await vscode.commands.executeCommand('editorScroll', { to: 'up', by: 'line', value: editor.document.lineCount, revealCursor: false });
-    await vscode.commands.executeCommand('editorScroll', { to: 'down', by: 'line', value: line, revealCursor: false });
+    if (line > 0) await vscode.commands.executeCommand('editorScroll', { to: 'down', by: 'line', value: line, revealCursor: false });
   };
   const rendered = text => until(async () => {
     const editor = await devtools.editor();
@@ -111,6 +111,18 @@ exports.run = async function run() {
         assert.equal(vscode.window.activeTextEditor.document.uri.toString(), currentUri);
         assert.ok(!Array.from(content.text).some(char => char.codePointAt(0) >= 0xE000 && char.codePointAt(0) <= 0xF8FF));
         report.evidence.liveAgentRead = { itemId: otherId, title: content.chapters[0].title, returnedCharacters: content.text.length, hasMore: content.hasMore };
+      });
+      await check('experimental code camouflage also renders a real public chapter without altering its content', async () => {
+        const editor = vscode.window.activeTextEditor;
+        const before = editor.document.getText();
+        await set('fanqie.reader.experimental.codeCamouflage', 'dense');
+        const css = await until(async () => {
+          const css = await devtools.editor();
+          return css && new Set(css.spans.map(span => span.color)).size >= 6 && css;
+        }, '真实小说的实验多色渲染');
+        assert.equal(editor.document.getText(), before);
+        report.evidence.liveCamouflage = { colors: [...new Set(css.spans.map(span => span.color))], unchangedText: true };
+        await devtools.screenshot(artifacts, 'reader-live-camouflage');
       });
       return;
     }
@@ -286,6 +298,114 @@ exports.run = async function run() {
       await colored('你终于到了', 'rgb(163, 21, 21)');
       await devtools.screenshot(artifacts, 'reader-light');
       await set('workbench.colorTheme', 'Default Dark Modern');
+      await colored('你终于到了', 'rgb(206, 145, 120)');
+    });
+
+    await check('code camouflage is off by default and is directly discoverable from the status-bar settings', async () => {
+      assert.equal(vscode.workspace.getConfiguration('fanqie.reader.experimental').get('codeCamouflage'), 'off');
+      const appearance = vscode.commands.executeCommand('fanqie.reader.appearance');
+      await until(() => devtools.evaluate("[...document.querySelectorAll('.quick-input-widget')].some(el => el.getBoundingClientRect().height > 0 && el.textContent.includes('实验性代码伪装配色'))"), '实验配色设置入口');
+      await devtools.screenshot(artifacts, 'reader-camouflage-settings-entry');
+      await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
+      await appearance;
+      const chooser = vscode.commands.executeCommand('fanqie.reader.camouflage');
+      await until(() => devtools.evaluate("[...document.querySelectorAll('.quick-input-widget')].some(el => el.getBoundingClientRect().height > 0 && el.textContent.includes('强伪装'))"), '平衡与强伪装两档');
+      await devtools.screenshot(artifacts, 'reader-camouflage-options');
+      await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
+      await chooser;
+    });
+
+    await check('balanced camouflage colors narrative phrases with real syntax tokens and a colorful native minimap', async () => {
+      const editor = vscode.window.activeTextEditor;
+      const original = { text: editor.document.getText(), uri: editor.document.uri.toString(), lines: editor.document.lineCount,
+        selection: editor.selection, css: await devtools.editor() };
+      const beforeMinimap = await devtools.minimapColors();
+      await set('fanqie.reader.experimental.codeCamouflage', 'balanced');
+      const styled = await until(async () => {
+        const css = await devtools.editor();
+        return css && new Set(css.spans.map(span => span.color)).size >= 6 && css;
+      }, '叙述正文使用多种代码语法色');
+      await colored('你终于到了', 'rgb(206, 145, 120)');
+      const minimap = await until(async () => { const colors = await devtools.minimapColors(); return colors.length >= 4 && colors; }, '原生缩略图同步多色语法标记');
+      assert.equal(editor.document.getText(), original.text);
+      assert.equal(editor.document.uri.toString(), original.uri);
+      assert.equal(editor.document.lineCount, original.lines);
+      assert.deepEqual(editor.selection, original.selection);
+      for (const key of ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'background']) assert.equal(styled[key], original.css[key], key);
+      report.evidence.camouflage = { balancedColors: [...new Set(styled.spans.map(span => span.color))], minimapColorBuckets: minimap.length, normalMinimapColorBuckets: beforeMinimap.length };
+      await devtools.screenshot(artifacts, 'reader-camouflage-balanced-dark');
+    });
+
+    await check('dense camouflage subdivides dialogue too, remains stable after scrolling and leaves code files untouched', async () => {
+      const before = await devtools.editor();
+      await set('fanqie.reader.experimental.codeCamouflage', 'dense');
+      const dense = await until(async () => {
+        const css = await devtools.editor();
+        return css && css.spans.length > before.spans.length && !css.spans.some(span => span.text.includes('你终于到了')) && css;
+      }, '对白细分多色');
+      report.evidence.camouflage.denseColors = [...new Set(dense.spans.map(span => span.color))];
+      await devtools.screenshot(artifacts, 'reader-camouflage-dense-dark');
+      const initial = dense.spans;
+      await scrollTo(100);
+      await until(() => vscode.window.activeTextEditor.visibleRanges[0]?.start.line >= 99, '实验配色滚动');
+      await scrollTo(0);
+      await rendered('第一章');
+      const returned = await devtools.editor();
+      assert.deepEqual(returned.spans, initial, 'no random recoloring after scrolling');
+      const reference = await vscode.workspace.openTextDocument(path.join(artifacts, 'workspace', 'reference.json'));
+      await vscode.window.showTextDocument(reference, { preview: false });
+      const code = await rendered('editor-layout-reference');
+      assert.equal(code.fontSize, report.evidence.appearance.code.fontSize);
+      assert.equal(code.background, report.evidence.appearance.code.background);
+      assert.equal(vscode.workspace.getConfiguration('editor', { uri: reference.uri, languageId: 'json' }).inspect('semanticHighlighting.enabled').globalLanguageValue, undefined);
+      await reader.openBook(BOOK_ID, ITEMS[0]);
+      await rendered('第一章');
+    });
+
+    await check('experimental syntax uses the actual light-theme palette and retains explicit keyword overrides', async () => {
+      await set('fanqie.reader.highlight.keywords.words', ['林舟']);
+      await set('fanqie.reader.highlight.keywords.color', '#E3C18D');
+      await colored('林舟', 'rgb(227, 193, 141)');
+      await set('workbench.colorTheme', 'Default Light Modern');
+      const css = await until(async () => {
+        const css = await devtools.editor();
+        return css && css.background !== report.evidence.appearance.code.background && new Set(css.spans.map(span => span.color)).size >= 6 && css;
+      }, '实验代码色适配浅色主题');
+      assert.ok(!css.spans.some(span => span.color === 'rgb(206, 145, 120)'), 'do not hardcode dark-theme string colors');
+      await devtools.screenshot(artifacts, 'reader-camouflage-dense-light');
+      await set('workbench.colorTheme', 'Default Dark Modern');
+      for (const key of ['keywords.words', 'keywords.color']) await set('fanqie.reader.highlight.' + key, undefined);
+    });
+
+    await check('master switch pauses camouflage; disabling the experiment restores original custom reading colors', async () => {
+      await set('fanqie.reader.highlight.dialogue.color', '#8AD6B1');
+      await set('fanqie.reader.appearance.foreground', '#BDD8C2');
+      await vscode.commands.executeCommand('fanqie.reader.toggleHighlight');
+      await colored('雨停的时候', 'rgb(189, 216, 194)');
+      assert.equal(vscode.workspace.getConfiguration('fanqie.reader.experimental').get('codeCamouflage'), 'dense');
+      await vscode.commands.executeCommand('fanqie.reader.toggleHighlight');
+      await until(async () => (await devtools.editor())?.spans.every(span => !span.text.includes('你终于到了')), '高亮总开关恢复实验配色');
+      await set('fanqie.reader.experimental.codeCamouflage', 'off');
+      await colored('你终于到了', 'rgb(138, 214, 177)');
+      await colored('雨停的时候', 'rgb(189, 216, 194)');
+      assert.equal(vscode.window.activeTextEditor.document.getText(), chapterText(chapters[0]));
+      await devtools.screenshot(artifacts, 'reader-camouflage-disabled-restored');
+      await set('fanqie.reader.highlight.dialogue.color', undefined);
+      await set('fanqie.reader.appearance.foreground', undefined);
+      await colored('你终于到了', 'rgb(206, 145, 120)');
+      await until(async () => (await devtools.minimapColors()).length <= report.evidence.camouflage.normalMinimapColorBuckets + 1, '退出实验后缩略图恢复');
+    });
+
+    await check('a native semantic-highlighting opt-out falls back to normal reading colors instead of blanking highlights', async () => {
+      const uri = vscode.window.activeTextEditor.document.uri;
+      const native = vscode.workspace.getConfiguration('editor', { uri, languageId: 'fanqie-novel' });
+      await set('fanqie.reader.experimental.codeCamouflage', 'dense');
+      await native.update('semanticHighlighting.enabled', false, vscode.ConfigurationTarget.Global, true);
+      await colored('你终于到了', 'rgb(206, 145, 120)');
+      assert.equal(vscode.workspace.getConfiguration('fanqie.reader.experimental').get('codeCamouflage'), 'dense');
+      await native.update('semanticHighlighting.enabled', undefined, vscode.ConfigurationTarget.Global, true);
+      await until(async () => (await devtools.editor())?.spans.every(span => !span.text.includes('你终于到了')), '恢复原生语义高亮后继续实验配色');
+      await set('fanqie.reader.experimental.codeCamouflage', 'off');
       await colored('你终于到了', 'rgb(206, 145, 120)');
     });
 

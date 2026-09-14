@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { chapterAddress } from './documents';
 import { findKeywords, findPageQuotes, findQuotes, subtractSpans, TextSpan } from './quotes';
 import type { ReadingPage } from './content';
+import { effectiveCamouflage } from './camouflageProvider';
 import { readingPalette, validColor } from './palette';
 
 type HighlightKind = 'dialogue' | 'innerQuotes' | 'keywords';
@@ -25,7 +26,8 @@ export class ReaderHighlights implements vscode.Disposable {
     this.disposables = [
       vscode.window.onDidChangeVisibleTextEditors(editors => editors.forEach(editor => this.apply(editor))),
       vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration('fanqie.reader.highlight') || event.affectsConfiguration('fanqie.reader.appearance')) {
+        if (event.affectsConfiguration('fanqie.reader.highlight') || event.affectsConfiguration('fanqie.reader.appearance')
+          || event.affectsConfiguration('fanqie.reader.experimental') || event.affectsConfiguration('editor.semanticHighlighting.enabled')) {
           this.clear();
           vscode.window.visibleTextEditors.forEach(editor => this.apply(editor));
         }
@@ -45,13 +47,14 @@ export class ReaderHighlights implements vscode.Disposable {
     const palette = readingPalette(appearance.get<string>('preset', 'theme'),
       theme === vscode.ColorThemeKind.Light || theme === vscode.ColorThemeKind.HighContrastLight,
       theme === vscode.ColorThemeKind.HighContrast || theme === vscode.ColorThemeKind.HighContrastLight);
-    const foreground = validColor(appearance.get('foreground')) || palette.foreground;
+    const camouflage = effectiveCamouflage(editor.document.uri);
+    const foreground = camouflage === 'off' ? validColor(appearance.get('foreground')) || palette.foreground : undefined;
     const background = validColor(appearance.get('lineBackground'));
     const styles = Object.fromEntries((['dialogue', 'innerQuotes', 'keywords'] as const).map(kind => {
       const color = validColor(config.get(kind + '.color')) || palette[kind] || '';
       const rawOpacity = config.get<number>(kind + '.opacity', 1);
       return [kind, {
-        enabled: enabled && config.get<boolean>(kind + '.enabled', kind !== 'innerQuotes'),
+        enabled: enabled && (camouflage === 'off' || kind === 'keywords') && config.get<boolean>(kind + '.enabled', kind !== 'innerQuotes'),
         color,
         opacity: Number.isFinite(rawOpacity) ? Math.max(0.3, Math.min(1, rawOpacity)) : 1,
       }];
@@ -59,7 +62,7 @@ export class ReaderHighlights implements vscode.Disposable {
     const configuredWords = config.get<unknown>('keywords.words', []);
     const words = (Array.isArray(configuredWords) ? configuredWords : [])
       .filter((word): word is string => typeof word === 'string').slice(0, 200).map(word => word.slice(0, 80));
-    const signature = JSON.stringify({ styles, words, foreground, background });
+    const signature = JSON.stringify({ styles, words, foreground, background, camouflage });
     const key = editor.document.uri.toString();
     let state = this.states.get(key);
     if (!state || state.signature !== signature || state.version !== editor.document.version) {

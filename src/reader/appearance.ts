@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { READER_LANGUAGE } from './content';
 import { validColor } from './palette';
+import { camouflageMode, CamouflageMode } from './camouflage';
 
 type FontOption = 'fontFamily' | 'fontSize' | 'lineHeight';
 const fontLabels: Record<FontOption, string> = { fontFamily: '字体', fontSize: '字号', lineHeight: '行间距（行高）' };
@@ -77,6 +78,30 @@ async function editColor(section: string, key: string, title: string, uri?: vsco
   if (value !== undefined) await setOption(section, key, value.trim(), uri);
 }
 
+const camouflageLabels: Record<CamouflageMode, string> = { off: '关闭（正常阅读）', balanced: '平衡（词组多色，保留对白）', dense: '强伪装（对白也分段配色）' };
+
+export async function chooseCamouflage(uri?: vscode.Uri): Promise<void> {
+  const current = camouflageMode(vscode.workspace.getConfiguration('fanqie.reader.experimental', uri).get('codeCamouflage'));
+  const picked = await vscode.window.showQuickPick((['off', 'balanced', 'dense'] as const).map(mode => ({
+    label: camouflageLabels[mode], value: mode, description: mode === current ? '当前模式' : '',
+    detail: mode === 'off' ? '立即恢复原来的正文 / 对话配色，不丢失自定义设置。'
+      : mode === 'balanced' ? '按词组、数字、连接词和标点模拟代码语法；牺牲少量阅读舒适度。'
+        : '更短的词组、更频繁的语法色变化，叙述和对白均强制多色；更像代码但更分散注意力。',
+  })), { title: '实验性代码伪装配色', placeHolder: '只改颜色，不改文字；使用当前代码主题并同步缩略图。开启将打开小说高亮总开关 / 语义高亮。', matchOnDetail: true });
+  if (!picked) return;
+  if (picked.value !== 'off') {
+    await setOption('fanqie.reader.highlight', 'enabled', true, uri);
+    const editor = fontConfig(uri);
+    if (editor.get('semanticHighlighting.enabled') === false) {
+      const inspected = editor.inspect('semanticHighlighting.enabled');
+      const target = inspected?.workspaceFolderLanguageValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
+        : inspected?.workspaceLanguageValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+      await editor.update('semanticHighlighting.enabled', true, target, true);
+    }
+  }
+  await setOption('fanqie.reader.experimental', 'codeCamouflage', picked.value, uri);
+}
+
 /** Keep customization in native Quick Pick / Input Box controls, with no toolbar over the chapter. */
 export async function showReaderAppearance(uri?: vscode.Uri): Promise<void> {
   while (true) {
@@ -112,13 +137,16 @@ export async function showReaderAppearance(uri?: vscode.Uri): Promise<void> {
         });
         if (chosen) await setOption('fanqie.reader.appearance', 'preset', chosen.value, uri);
       } },
+      { label: '$(beaker) 实验性代码伪装配色', description: camouflageLabels[camouflageMode(vscode.workspace.getConfiguration('fanqie.reader.experimental', uri).get('codeCamouflage'))],
+        detail: '不止引号：按词组强制多色，缩略图同步；关闭后恢复原配色。', run: () => chooseCamouflage(uri) },
       { label: '正文文字颜色', description: appearance.get<string>('foreground') || '跟随配色方案', run: () => editColor('fanqie.reader.appearance', 'foreground', '正文文字颜色', uri) },
       { label: '正文行底色', description: appearance.get<string>('lineBackground') || '透明（原生背景）', detail: '仅正文行，不改变行号、缩略图、空白区和其他代码页的背景。', run: () => editColor('fanqie.reader.appearance', 'lineBackground', '正文行底色（仅正文行）', uri) },
       ...([['dialogue', '对话颜色'], ['innerQuotes', '单引号 / 内心独白颜色'], ['keywords', '人物 / 关键词颜色']] as const).map(([kind, label]) => ({
         label, description: vscode.workspace.getConfiguration('fanqie.reader.highlight', uri).get<string>(kind + '.color') || '跟随配色方案',
         run: () => editColor('fanqie.reader.highlight', kind + '.color', label, uri),
       })),
-      { label: '恢复配色跟随 VS Code', description: '清除正文底色与所有自定义文字颜色', run: async () => {
+      { label: '恢复配色跟随 VS Code', description: '清除正文底色与自定义颜色，并退出实验配色', run: async () => {
+        await setOption('fanqie.reader.experimental', 'codeCamouflage', 'off', uri);
         await setOption('fanqie.reader.appearance', 'preset', 'theme', uri);
         for (const key of ['foreground', 'lineBackground']) await setOption('fanqie.reader.appearance', key, '', uri);
         for (const kind of ['dialogue', 'innerQuotes', 'keywords']) await setOption('fanqie.reader.highlight', kind + '.color', '', uri);

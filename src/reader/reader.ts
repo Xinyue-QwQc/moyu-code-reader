@@ -4,7 +4,8 @@ import { getLocalShelf, getReadHistory, getUser, setLocalShelf, setReadHistory }
 import { canonicalLine, chapterProgress, chaptersPerPage, displayLine, paragraphSpacing, flattenDirectory, isBookId, pageChapterIds, positionKey, READER_LANGUAGE, READER_SCHEME, SavedPosition, sectionAtLine } from './content';
 import { chapterAddress, ChapterFileSystem, pageUri } from './documents';
 import { ReaderHighlights } from './highlights';
-import { showReaderAppearance } from './appearance';
+import { chooseCamouflage, showReaderAppearance } from './appearance';
+import { CamouflageProvider, effectiveCamouflage } from './camouflageProvider';
 import type { AgentReadingContext } from '../agent/types';
 
 const POSITIONS_KEY = 'fanqie.nativeReader.positions.v1';
@@ -18,6 +19,7 @@ interface ReaderActions {
 
 export class NativeReader implements vscode.Disposable {
   private readonly files = new ChapterFileSystem();
+  private readonly camouflage = new CamouflageProvider(uri => this.files.peekPage(uri));
   private readonly highlights = new ReaderHighlights(uri => this.files.peekPage(uri));
   private readonly disposables: vscode.Disposable[] = [];
   private readonly books = new Map<string, Book>();
@@ -77,6 +79,7 @@ export class NativeReader implements vscode.Disposable {
     register('fanqie.reader.previousChapter', () => this.navigate(-1));
     register('fanqie.reader.nextChapter', () => this.navigate(1));
     register('fanqie.reader.pageSize', (value?: number) => this.choosePageSize(value));
+    register('fanqie.reader.camouflage', () => chooseCamouflage(vscode.window.activeTextEditor?.document.uri));
     register('fanqie.reader.appearance', () => showReaderAppearance(vscode.window.activeTextEditor?.document.uri));
     register('fanqie.reader.settings', () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:zwb8926.fanqie-novel'));
     register('fanqie.reader.toggleHighlight', () => this.toggleHighlight());
@@ -179,7 +182,7 @@ export class NativeReader implements vscode.Disposable {
         if (!editor.selection.active.isEqual(cursor) || this.currentSection(editor)?.itemId !== itemId) {
           editor.selection = new vscode.Selection(cursor, cursor);
           await vscode.commands.executeCommand('editorScroll', { to: 'up', by: 'line', value: document.lineCount, revealCursor: false });
-          if (vscode.window.activeTextEditor === editor) await vscode.commands.executeCommand('editorScroll', { to: 'down', by: 'line', value: top.line, revealCursor: false });
+          if (vscode.window.activeTextEditor === editor && top.line > 0) await vscode.commands.executeCommand('editorScroll', { to: 'down', by: 'line', value: top.line, revealCursor: false });
         }
         this.highlights.apply(editor);
         this.refreshStatus();
@@ -311,6 +314,9 @@ export class NativeReader implements vscode.Disposable {
     this.menu.tooltip = [book?.info?.book_name || chapter?.bookName, chapter?.title, '阅读菜单：书城、书架、详情、书评'].filter(Boolean).join('\n');
     this.catalog.text = '$(list-ordered) ' + start + (address.itemIds.length > 1 ? '–' + last : '') + '/' + total + ' · ' + percentage + '%';
     this.catalog.tooltip = (chapter?.title || '当前章节') + '\n点击打开目录；百分比为本页整个虚拟文件的滚动位置';
+    const camouflage = effectiveCamouflage(editor.document.uri);
+    this.settings.text = camouflage === 'off' ? '$(settings-gear) 设置' : '$(beaker) 设置';
+    this.settings.tooltip = '阅读设置：字体、行段间距、配色与高亮' + (camouflage === 'off' ? '' : '\n实验性代码配色已开启（' + (camouflage === 'dense' ? '强伪装' : '平衡') + '），点击可关闭');
     this.pageCount.text = '$(files) 每页 ' + this.size(editor.document.uri) + ' 章';
     this.pageCount.tooltip = '当前文件实际包含 ' + address.itemIds.length + ' 章。点击调整每页章节数（1–50）。';
     items.forEach(item => item.show());
@@ -423,6 +429,7 @@ export class NativeReader implements vscode.Disposable {
     void this.flush().catch(error => console.warn('[fanqie dispose]', error));
     this.disposables.forEach(disposable => disposable.dispose());
     this.highlights.dispose();
+    this.camouflage.dispose();
     this.files.dispose();
   }
 }
