@@ -5,7 +5,7 @@ const path = require('node:path');
 const vscode = require('vscode');
 const { BOOK_ID, ITEMS, chapters, OTHER_BOOK_ID, OTHER_ITEMS, otherChapters, installFixtures } = require('./fixtures.cjs');
 const { connect, until } = require('./devtools.cjs');
-const { chapterText, readingPage, displayLine } = require('../out/reader/content');
+const { chapterText, readingPage, displayLine, canonicalLine } = require('../out/reader/content');
 const { chapterUri, chapterAddress, pageUri, ChapterFileSystem } = require('../out/reader/documents');
 const api = require('../out/api/fanqie');
 const store = require('../out/net/store');
@@ -40,12 +40,122 @@ exports.run = async function run() {
   try {
     const extension = vscode.extensions.getExtension('zwb8926.fanqie-novel');
     assert.ok(extension, 'development extension was discovered');
+    if (phase === 'main') {
+      // Exercise all pre-existing controls using explicit compact-layout preferences. The separate
+      // defaults phase verifies the new shipped word-wrap/paragraph-gap behavior without overrides.
+      await set('fanqie.reader.paragraphSpacing', 0);
+      await vscode.workspace.getConfiguration('editor', { languageId: 'fanqie-novel' })
+        .update('wordWrap', 'off', vscode.ConfigurationTarget.Global, true);
+    }
     const reader = await extension.activate();
     devtools = await connect(process.env.FANQIE_TEST_DEBUG_PORT);
     await devtools.send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false });
     await vscode.commands.executeCommand('workbench.action.closeSidebar');
     await vscode.commands.executeCommand('workbench.action.closePanel');
     await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+
+    if (phase === 'defaults') {
+      const longParagraph = '这是原小说中的同一个长段落，自动折行的续行不应该额外空一行。'.repeat(9);
+      chapters[0].paragraphs[0] = longParagraph;
+      await check('fresh installs wrap novel text and add one blank line between original paragraphs by default', async () => {
+        await reader.openBook(BOOK_ID, ITEMS[0]);
+        const editor = vscode.window.activeTextEditor;
+        const preferences = vscode.workspace.getConfiguration('editor', { uri: editor.document.uri, languageId: 'fanqie-novel' });
+        assert.equal(preferences.get('wordWrap'), 'on');
+        assert.equal(preferences.inspect('wordWrap').globalLanguageValue, undefined);
+        assert.equal(vscode.workspace.getConfiguration('fanqie.reader').get('paragraphSpacing'), 1);
+        assert.equal(vscode.workspace.getConfiguration('fanqie.reader').inspect('paragraphSpacing').globalValue, undefined);
+        assert.equal(chapterAddress(editor.document.uri).paragraphSpacing, 1);
+        assert.equal(editor.document.getText(), chapterText(chapters[0], 1));
+        assert.equal(editor.document.lineAt(2).text, longParagraph);
+        assert.equal(editor.document.lineAt(3).text, '');
+        assert.equal(editor.document.lineAt(4).text, chapters[0].paragraphs[1]);
+        const renderedPage = await until(async () => {
+          const css = await devtools.editor();
+          const next = css?.lines.findIndex(line => line.includes('你终于到了')) ?? -1;
+          return css && next > 4 && { css, next };
+        }, '长段落在原生编辑器中自动折成多行');
+        const { css, next } = renderedPage;
+        assert.equal(css.lines[next - 1].trim(), '', 'exactly one blank display row separates paragraphs');
+        assert.ok(css.lines.slice(2, next - 1).length > 1, 'long paragraph wraps into multiple visual rows');
+        assert.ok(css.lines.slice(2, next - 1).every(line => line.trim()), 'wrapped continuation rows have no extra gaps');
+        assert.equal(css.lineHeight, '27px');
+        assert.equal(css.hasMinimap, true);
+        report.evidence.defaults = { wordWrap: preferences.get('wordWrap'), paragraphSpacing: 1,
+          firstParagraphLogicalLines: 1, firstParagraphVisualRows: next - 3, nativeLineHeight: css.lineHeight };
+        await devtools.screenshot(artifacts, 'reader-default-wrap-and-paragraph-gap');
+      });
+
+      await check('novel wrap default never changes ordinary code and explicit compact preferences remain supported', async () => {
+        const reference = await vscode.workspace.openTextDocument(path.join(artifacts, 'workspace', 'reference.json'));
+        await vscode.window.showTextDocument(reference, { preview: false });
+        assert.equal(vscode.workspace.getConfiguration('editor', { uri: reference.uri, languageId: 'json' }).get('wordWrap'), 'off');
+        await reader.openBook(BOOK_ID, ITEMS[0]);
+        const native = vscode.workspace.getConfiguration('editor', { uri: vscode.window.activeTextEditor.document.uri, languageId: 'fanqie-novel' });
+        await native.update('wordWrap', 'off', vscode.ConfigurationTarget.Global, true);
+        await set('fanqie.reader.paragraphSpacing', 0);
+        await until(() => chapterAddress(vscode.window.activeTextEditor.document.uri)?.paragraphSpacing === 0, '显式紧凑设置仍生效');
+        assert.equal(vscode.window.activeTextEditor.document.getText(), chapterText(chapters[0]));
+        assert.equal(vscode.workspace.getConfiguration('editor', { languageId: 'fanqie-novel' }).get('wordWrap'), 'off');
+        await native.update('wordWrap', undefined, vscode.ConfigurationTarget.Global, true);
+        await set('fanqie.reader.paragraphSpacing', undefined);
+        await until(() => chapterAddress(vscode.window.activeTextEditor.document.uri)?.paragraphSpacing === 1, '清除覆盖后恢复新默认');
+        assert.equal(vscode.workspace.getConfiguration('editor', { languageId: 'fanqie-novel' }).get('wordWrap'), 'on');
+      });
+
+      await check('old zero-gap virtual tabs adopt the new default when reopened, preserving chapter-relative cursor position', async () => {
+        const uri = chapterUri(BOOK_ID, chapters[1]); // Legacy URI intentionally has no spacing parameter.
+        const legacy = await vscode.workspace.openTextDocument(uri);
+        assert.equal(legacy.getText(), chapterText(chapters[1]), 'legacy URI offsets stay readable before migration');
+        await vscode.window.showTextDocument(legacy, { preview: false, selection: new vscode.Range(30, 3, 30, 3) });
+        await until(() => {
+          const address = chapterAddress(vscode.window.activeTextEditor.document.uri);
+          return address?.itemId === ITEMS[1] && address.paragraphSpacing === 1;
+        }, '升级前阅读标签页重新应用新默认');
+        await reader.flush();
+        const editor = vscode.window.activeTextEditor;
+        const section = readingPage([chapters[1]], 1).sections[0];
+        assert.equal(editor.document.getText(), chapterText(chapters[1], 1));
+        assert.equal(editor.selection.active.line, displayLine(section, 30));
+        assert.equal(editor.selection.active.character, 3);
+        await until(() => !vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString())), '旧布局标签关闭，仅保留新布局');
+      });
+      await check('old five-chapter tabs preserve a position inside a later chapter when adopting paragraph gaps', async () => {
+        await set('fanqie.reader.chaptersPerPage', 5);
+        await reader.flush();
+        const oldPage = readingPage(chapters.slice(0, 5));
+        const uri = pageUri(BOOK_ID, chapters.slice(0, 5), chapters[0].bookName, 5, 0);
+        const legacy = await vscode.workspace.openTextDocument(uri);
+        const cursor = oldPage.sections[2].startLine + 30;
+        await vscode.window.showTextDocument(legacy, { preview: false, selection: new vscode.Range(cursor, 3, cursor, 3) });
+        await until(() => chapterAddress(vscode.window.activeTextEditor.document.uri)?.paragraphSpacing === 1, 'legacy multi-chapter layout updated');
+        await reader.flush();
+        const editor = vscode.window.activeTextEditor;
+        const page = readingPage(chapters.slice(0, 5), 1);
+        assert.equal(editor.document.getText(), page.text);
+        assert.equal(editor.selection.active.line, displayLine(page.sections[2], 30));
+        assert.equal(editor.selection.active.character, 3);
+        assert.deepEqual(chapterAddress(editor.document.uri).itemIds, ITEMS.slice(0, 5));
+      });
+      await check('paragraph layout changes retain the visible paragraph while long paragraphs are soft-wrapped', async () => {
+        let editor = vscode.window.activeTextEditor;
+        const section = readingPage(chapters.slice(0, 5), 1).sections[2];
+        const target = displayLine(section, 60);
+        editor.selection = new vscode.Selection(target + 4, 3, target + 4, 3);
+        await scrollTo(target);
+        await until(() => editor.visibleRanges[0].start.line === target, 'native wrapped paragraph revealed');
+        const top = canonicalLine(section, editor.visibleRanges[0].start.line);
+        await reader.flush();
+        await set('fanqie.reader.paragraphSpacing', 2);
+        await until(() => chapterAddress(vscode.window.activeTextEditor.document.uri)?.paragraphSpacing === 2, 'wrapped paragraph layout rebuilt');
+        await reader.flush();
+        editor = vscode.window.activeTextEditor;
+        const newSection = readingPage(chapters.slice(0, 5), 2).sections[2];
+        assert.equal(editor.selection.active.line, displayLine(newSection, 62));
+        await until(() => editor.visibleRanges[0].start.line === displayLine(newSection, top), 'visible paragraph preserved with soft wrapping');
+      });
+      return;
+    }
 
     if (phase === 'codex') {
       await reader.openBook(BOOK_ID, ITEMS[0]);

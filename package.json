@@ -2,7 +2,7 @@
   "name": "fanqie-novel",
   "displayName": "番茄小说",
   "description": "番茄小说原生阅读器：每页可合并多章，独立字体、行间距、段间距与配色；状态栏阅读设置和 AI 上下文，支持 agent 按需读取未展示章节，无需另配 Codex/MCP。",
-  "version": "2028.8.226",
+  "version": "2028.8.227",
   "publisher": "zwb8926",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -354,11 +354,11 @@
         },
         "fanqie.reader.paragraphSpacing": {
           "type": "integer",
-          "default": 0,
+          "default": 1,
           "minimum": 0,
           "maximum": 5,
           "scope": "resource",
-          "markdownDescription": "段落之间额外插入的空行数（0–5），独立于**行间距 / 行高**。原生自动换行仍沿用行高；仅段落之间增加空行。默认 0 保持代码页体验。状态栏「设置」可直接调整，阅读位置按段落保留。"
+          "markdownDescription": "原小说段落之间额外插入的空行数（0–5），默认 **1**（每段之间空一行），独立于**行间距 / 行高**。自动折行只折分长段落，续行之间不额外空行。状态栏「设置 → 段间距」可调整；设为 0 可恢复紧凑排列，阅读位置按段落保留。"
         },
         "fanqie.reader.agent.enabled": {
           "type": "boolean",
@@ -419,7 +419,8 @@
     "configurationDefaults": {
       "[fanqie-novel]": {
         "editor.minimap.enabled": true,
-        "editor.semanticHighlighting.enabled": true
+        "editor.semanticHighlighting.enabled": true,
+        "editor.wordWrap": "on"
       }
     },
     "languageModelTools": [

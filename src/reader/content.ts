@@ -4,9 +4,10 @@ export const READER_SCHEME = 'fanqie';
 export const READER_LANGUAGE = 'fanqie-novel';
 export const CHAPTER_EXTENSION = '.fanqie';
 export const MAX_CHAPTERS_PER_PAGE = 50;
+export const DEFAULT_PARAGRAPH_SPACING = 1;
 
 export function paragraphSpacing(value: unknown): number {
-  return typeof value === 'number' && Number.isInteger(value) ? Math.max(0, Math.min(5, value)) : 0;
+  return typeof value === 'number' && Number.isInteger(value) ? Math.max(0, Math.min(5, value)) : DEFAULT_PARAGRAPH_SPACING;
 }
 
 /** Blank lines are real native-editor lines; line height remains a separate language setting. */

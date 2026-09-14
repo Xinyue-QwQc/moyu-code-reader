@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { READER_LANGUAGE } from './content';
+import { DEFAULT_PARAGRAPH_SPACING, READER_LANGUAGE } from './content';
 import { validColor } from './palette';
 import { camouflageMode, CamouflageMode } from './camouflage';
 
@@ -121,8 +121,8 @@ export async function showReaderAppearance(uri?: vscode.Uri): Promise<void> {
       ...(['fontFamily', 'fontSize', 'lineHeight'] as const).map(option => ({
         label: fontLabels[option], description: fontDescription(option, uri), run: () => editFont(option, uri),
       })),
-      { label: '段间距', description: String(vscode.workspace.getConfiguration('fanqie.reader', uri).get('paragraphSpacing', 0)) + ' 个空行', run: async () => {
-        const picked = await vscode.window.showQuickPick([0, 1, 2, 3, 4, 5].map(value => ({ label: value === 0 ? '不额外空行（代码页默认）' : '段落之间空 ' + value + ' 行', value })), {
+      { label: '段间距', description: String(vscode.workspace.getConfiguration('fanqie.reader', uri).get('paragraphSpacing', DEFAULT_PARAGRAPH_SPACING)) + ' 个空行', run: async () => {
+        const picked = await vscode.window.showQuickPick([0, 1, 2, 3, 4, 5].map(value => ({ label: value === 0 ? '不额外空行（紧凑排列）' : '段落之间空 ' + value + ' 行' + (value === DEFAULT_PARAGRAPH_SPACING ? '（默认）' : ''), value })), {
           title: '段间距（独立于行间距）', placeHolder: '原生编辑器按空行分隔段落；自动换行形成的行仍使用行间距',
         });
         if (picked) await setOption('fanqie.reader', 'paragraphSpacing', picked.value, uri);

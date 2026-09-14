@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as api from '../api/fanqie';
 import { getLocalShelf, getReadHistory, getUser, setLocalShelf, setReadHistory } from '../net/store';
-import { canonicalLine, chapterProgress, chaptersPerPage, displayLine, paragraphSpacing, flattenDirectory, isBookId, pageChapterIds, positionKey, READER_LANGUAGE, READER_SCHEME, SavedPosition, sectionAtLine } from './content';
+import { DEFAULT_PARAGRAPH_SPACING, canonicalLine, chapterProgress, chaptersPerPage, displayLine, paragraphSpacing, flattenDirectory, isBookId, pageChapterIds, positionKey, READER_LANGUAGE, READER_SCHEME, SavedPosition, sectionAtLine } from './content';
 import { chapterAddress, ChapterFileSystem, pageUri } from './documents';
 import { ReaderHighlights } from './highlights';
 import { chooseCamouflage, showReaderAppearance } from './appearance';
@@ -100,14 +100,7 @@ export class NativeReader implements vscode.Disposable {
         const editor = vscode.window.activeTextEditor;
         const address = editor && chapterAddress(editor.document.uri);
         if (editor && address && (event.affectsConfiguration('fanqie.reader.chaptersPerPage', editor.document.uri) || event.affectsConfiguration('fanqie.reader.paragraphSpacing', editor.document.uri))) {
-          const section = this.currentSection(editor);
-          this.savePosition(editor);
-          const oldTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-          this.configurationTask = this.openBook(address.bookId, section?.itemId ?? address.itemId).then(async () => {
-            const current = vscode.window.activeTextEditor;
-            if (oldTab && vscode.window.tabGroups.all.some(group => group.tabs.includes(oldTab)) && current && current.document.uri.toString() !== editor.document.uri.toString()
-              && chapterAddress(current.document.uri)?.bookId === address.bookId) await vscode.window.tabGroups.close(oldTab, true);
-          }).catch(error => { void vscode.window.showErrorMessage('调整阅读布局失败：' + this.errorText(error)); });
+          this.configurationTask = this.rebuildLayout(editor);
         }
         this.refreshStatus();
       }),
@@ -118,6 +111,7 @@ export class NativeReader implements vscode.Disposable {
   }
 
   private errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  private spacing(uri?: vscode.Uri): number { return paragraphSpacing(vscode.workspace.getConfiguration('fanqie.reader', uri).get('paragraphSpacing', DEFAULT_PARAGRAPH_SPACING)); }
   private size(uri?: vscode.Uri): number { return chaptersPerPage(vscode.workspace.getConfiguration('fanqie.reader', uri).get('chaptersPerPage', 1)); }
   private currentSection(editor: vscode.TextEditor) {
     const page = this.files.peekPage(editor.document.uri);
@@ -140,7 +134,7 @@ export class NativeReader implements vscode.Disposable {
   }
 
   /** All library/sidebar/history entry points use this exact same native multi-chapter document. */
-  async openBook(bookId: string, itemId?: string): Promise<void> {
+  async openBook(bookId: string, itemId?: string, layoutSource?: vscode.TextEditor): Promise<void> {
     if (!isBookId(bookId) || (itemId && !isBookId(itemId))) throw new Error('请输入有效的书籍 / 章节 ID（至少 10 位数字）。');
     const sequence = ++this.openSequence;
     const count = this.size();
@@ -163,17 +157,22 @@ export class NativeReader implements vscode.Disposable {
       const ids = pageChapterIds(book.chapters, itemId, count);
       const chapters = await this.files.chapters(bookId, ids);
       if (this.disposed || sequence !== this.openSequence) return;
-      const uri = pageUri(bookId, chapters, book.info?.book_name, count, paragraphSpacing(vscode.workspace.getConfiguration('fanqie.reader').get('paragraphSpacing', 0)));
+      const uri = pageUri(bookId, chapters, book.info?.book_name, count, this.spacing());
       const page = await this.files.page(uri);
-      const section = page.sections.find(section => section.itemId === itemId)!;
-      const targetChapter = chapters.find(chapter => chapter.itemId === itemId)!;
-      const saved = this.positions[positionKey(bookId, itemId)];
       this.restoring.add(uri.toString());
       try {
         const document = await vscode.workspace.openTextDocument(uri);
         if (this.disposed || sequence !== this.openSequence) return;
         const editor = await vscode.window.showTextDocument(document, { preview: false, viewColumn: vscode.ViewColumn.Active });
         if (this.disposed || sequence !== this.openSequence) return;
+        // Native tab activation precedes its restored selection/viewport events. A layout
+        // migration must read the source chapter and position after those events arrive.
+        const sourceSection = layoutSource && this.currentSection(layoutSource);
+        if (layoutSource) this.savePosition(layoutSource);
+        if (sourceSection && page.sections.some(section => section.itemId === sourceSection.itemId)) itemId = sourceSection.itemId;
+        const section = page.sections.find(section => section.itemId === itemId)!;
+        const targetChapter = chapters.find(chapter => chapter.itemId === itemId)!;
+        const saved = this.positions[positionKey(bookId, itemId)];
         const relative = (line: number) => displayLine(section, Math.max(0, line || 0));
         const cursor = document.validatePosition(new vscode.Position(relative(saved?.line ?? 0), Math.max(0, saved?.character ?? 0)));
         const top = document.validatePosition(new vscode.Position(relative(saved?.topLine ?? 0), Math.max(0, saved?.topCharacter ?? 0)));
@@ -192,12 +191,32 @@ export class NativeReader implements vscode.Disposable {
     });
   }
 
+  /** Reopen saved old-layout tabs with current reading defaults without discarding canonical progress. */
+  private rebuildLayout(editor: vscode.TextEditor): Promise<void> {
+    const address = chapterAddress(editor.document.uri);
+    if (!address || this.restoring.has(editor.document.uri.toString()) || vscode.window.activeTextEditor !== editor) return Promise.resolve();
+    const section = this.currentSection(editor);
+    this.savePosition(editor);
+    const oldTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    return this.openBook(address.bookId, section?.itemId ?? address.itemId, editor).then(async () => {
+      const current = vscode.window.activeTextEditor;
+      if (oldTab && vscode.window.tabGroups.all.some(group => group.tabs.includes(oldTab)) && current
+        && current.document.uri.toString() !== editor.document.uri.toString()
+        && chapterAddress(current.document.uri)?.bookId === address.bookId) await vscode.window.tabGroups.close(oldTab, true);
+    }).catch(error => { void vscode.window.showErrorMessage('调整阅读布局失败：' + this.errorText(error)); });
+  }
+
   private async activated(editor: vscode.TextEditor): Promise<void> {
     const address = chapterAddress(editor.document.uri);
     if (!address) return;
     try {
       await this.files.page(editor.document.uri);
       if (this.disposed || vscode.window.activeTextEditor !== editor) return;
+      if (!this.restoring.has(editor.document.uri.toString()) && address.paragraphSpacing !== this.spacing(editor.document.uri)) {
+        this.configurationTask = this.rebuildLayout(editor);
+        await this.configurationTask;
+        return;
+      }
       this.highlights.apply(editor);
       this.refreshStatus();
       this.recordVisibleChapter(editor);

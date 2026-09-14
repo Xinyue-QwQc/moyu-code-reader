@@ -93,7 +93,7 @@ test('manifest exposes every highlight option and never overrides native editor 
   const manifest = require('../package.json');
   assert.ok(manifest.activationEvents.includes('onFileSystem:fanqie'));
   assert.ok(manifest.contributes.languages.some(language => language.id === 'fanqie-novel'));
-  assert.deepEqual(manifest.contributes.configurationDefaults, { '[fanqie-novel]': { 'editor.minimap.enabled': true, 'editor.semanticHighlighting.enabled': true } });
+  assert.deepEqual(manifest.contributes.configurationDefaults, { '[fanqie-novel]': { 'editor.minimap.enabled': true, 'editor.semanticHighlighting.enabled': true, 'editor.wordWrap': 'on' } });
   const properties = manifest.contributes.configuration.properties;
   for (const kind of ['dialogue', 'innerQuotes', 'keywords']) {
     for (const suffix of ['enabled', 'color', 'opacity']) assert.ok(properties['fanqie.reader.highlight.' + kind + '.' + suffix]);
@@ -178,13 +178,14 @@ test('combined documents contain every complete chapter and track exact section 
 
 const { chapterLayout, paragraphSpacing, canonicalLine, displayLine } = require('../out/reader/content');
 
-test('line height and paragraph spacing are independent, with a native zero-spacing default', () => {
+test('line height and paragraph spacing are independent; canonical source text retains zero spacing', () => {
   const chapter = { title: '第一章', paragraphs: ['段落一', '段落二\n段内换行', '段落三'] };
   assert.equal(chapterText(chapter, 0), '第一章\n\n段落一\n段落二\n段内换行\n段落三\n');
   assert.equal(chapterText(chapter, 1), '第一章\n\n段落一\n\n段落二\n段内换行\n\n段落三\n');
   assert.equal(chapterText(chapter, 2), '第一章\n\n段落一\n\n\n段落二\n段内换行\n\n\n段落三\n');
   assert.equal(chapterLayout(chapter, 2).text.split('\n').length, chapterLayout(chapter).text.split('\n').length + 4);
-  for (const value of [undefined, '2', NaN, 1.2, -1]) assert.equal(paragraphSpacing(value), 0);
+  for (const value of [undefined, '2', NaN, 1.2]) assert.equal(paragraphSpacing(value), 1);
+  assert.equal(paragraphSpacing(-1), 0);
   assert.equal(paragraphSpacing(8), 5);
 });
 
@@ -213,4 +214,17 @@ test('paragraph spacing does not interrupt cross-paragraph dialogue or leak quot
     const quotes = findPageQuotes(page);
     assert.deepEqual(slices(page.text, quotes.dialogue), ['“第一段' + '\n'.repeat(spacing + 1) + '第二段。”', '「独立对话。」']);
   }
+});
+
+test('reading defaults wrap novel lines and insert one blank line between original paragraphs only', () => {
+  const { DEFAULT_PARAGRAPH_SPACING } = require('../out/reader/content');
+  const manifest = require('../package.json');
+  assert.equal(DEFAULT_PARAGRAPH_SPACING, 1);
+  assert.equal(manifest.contributes.configuration.properties['fanqie.reader.paragraphSpacing'].default, 1);
+  assert.equal(manifest.contributes.configurationDefaults['[fanqie-novel]']['editor.wordWrap'], 'on');
+  assert.equal(manifest.contributes.configurationDefaults['editor.wordWrap'], undefined);
+  const paragraphs = ['长段落'.repeat(120), '第二段', '第三段'];
+  const displayed = chapterText({ title: '第一章', paragraphs }, DEFAULT_PARAGRAPH_SPACING);
+  assert.equal(displayed, '第一章\n\n' + paragraphs.join('\n\n') + '\n');
+  assert.equal(chapterText({ title: '第一章', paragraphs }), '第一章\n\n' + paragraphs.join('\n') + '\n', 'AI/source text is not reformatted');
 });
