@@ -11,3 +11,5 @@ research/
 test/
 .test-data/
 .vscode-test/
+
+PROJECT_MEMORY.md

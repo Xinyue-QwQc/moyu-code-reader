@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import * as api from '../api/fanqie';
-import { getLocalShelf, getReadHistory, getUser, setLocalShelf, setReadHistory } from '../net/store';
+import { getLocalShelf, getReadHistory, getUser, setLocalShelf, setReadHistory, HistoryItem, LocalShelfItem } from '../net/store';
 import { DEFAULT_PARAGRAPH_SPACING, canonicalLine, chapterProgress, chaptersPerPage, displayLine, paragraphSpacing, flattenDirectory, isBookId, pageChapterIds, positionKey, READER_LANGUAGE, READER_SCHEME, SavedPosition, sectionAtLine } from './content';
 import { chapterAddress, ChapterFileSystem, pageUri } from './documents';
 import { ReaderHighlights } from './highlights';
-import { chooseCamouflage, showReaderAppearance } from './appearance';
+import { chooseCamouflage, chooseReaderFont, showReaderAppearance } from './appearance';
 import { CamouflageProvider, effectiveCamouflage } from './camouflageProvider';
 import type { AgentReadingContext } from '../agent/types';
+import { updateMemento } from '../net/state';
 
 const POSITIONS_KEY = 'fanqie.nativeReader.positions.v1';
 interface Book { info?: api.BookInfo; chapters: api.ChapterItem[]; loadedAt: number }
@@ -14,7 +15,7 @@ interface ReaderActions {
   openLibrary(view?: string): Promise<void>;
   openDetails(bookId: string): Promise<void>;
   openComments(bookId: string): Promise<void>;
-  onProgressChanged(): void;
+  onProgressChanged(progress: { history: HistoryItem; shelf: LocalShelfItem }): void;
 }
 
 export class NativeReader implements vscode.Disposable {
@@ -32,8 +33,10 @@ export class NativeReader implements vscode.Disposable {
   private remoteWrites = Promise.resolve();
   private configurationTask = Promise.resolve();
   private lastRecorded = '';
+  private lastPublished = '';
   private openSequence = 0;
   private navigating = false;
+  private refreshing: Promise<void> | undefined;
   private disposed = false;
   private lastAgentContext: AgentReadingContext | undefined;
   private previousEditor: vscode.TextEditor | undefined;
@@ -75,6 +78,8 @@ export class NativeReader implements vscode.Disposable {
         catch (error) { await vscode.window.showErrorMessage('番茄小说：' + this.errorText(error)); }
       }));
     register('fanqie.reader.menu', () => this.showMenu());
+    register('fanqie.reader.font', () => chooseReaderFont(vscode.window.activeTextEditor?.document.uri));
+    register('fanqie.reader.refresh', () => this.refreshPage());
     register('fanqie.reader.catalog', () => this.showCatalog());
     register('fanqie.reader.previousChapter', () => this.navigate(-1));
     register('fanqie.reader.nextChapter', () => this.navigate(1));
@@ -89,7 +94,7 @@ export class NativeReader implements vscode.Disposable {
         this.previousEditor = editor;
         this.refreshStatus();
         if (editor && chapterAddress(editor.document.uri)) void this.activated(editor);
-        else this.lastRecorded = '';
+        else this.lastRecorded = ''; // Reassert local resume state on return; publishing is deduplicated separately.
       }),
       vscode.window.onDidChangeTextEditorVisibleRanges(event => {
         this.savePosition(event.textEditor);
@@ -287,6 +292,43 @@ export class NativeReader implements vscode.Disposable {
     if (picked) { this.savePosition(editor); await this.openBook(address.bookId, picked.itemId); }
   }
 
+  private refreshPage(): Promise<void> {
+    if (this.refreshing) return this.refreshing;
+    const editor = vscode.window.activeTextEditor;
+    const address = editor && chapterAddress(editor.document.uri);
+    if (!editor || !address) return Promise.resolve();
+    const uri = editor.document.uri;
+    const oldPage = this.files.peekPage(uri);
+    if (!oldPage) return Promise.resolve();
+    this.savePosition(editor);
+    const section = this.currentSection(editor);
+    const saved = section && this.positions[positionKey(address.bookId, section.itemId)];
+    this.restoring.add(uri.toString());
+    this.refreshing = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: '番茄小说：刷新当前阅读页…' }, async () => {
+      const page = await this.files.refresh(uri);
+      if (this.disposed || vscode.window.activeTextEditor !== editor) return;
+      // A normal native reload of this readonly virtual file, never a close/reopen of other editors.
+      await vscode.commands.executeCommand('workbench.action.files.revert', uri);
+      if (this.disposed || vscode.window.activeTextEditor !== editor) return;
+      const updated = page.sections.find(candidate => candidate.itemId === section?.itemId);
+      if (updated && saved) {
+        const cursor = editor.document.validatePosition(new vscode.Position(displayLine(updated, saved.line), saved.character));
+        const top = editor.document.validatePosition(new vscode.Position(displayLine(updated, saved.topLine), saved.topCharacter));
+        editor.selection = new vscode.Selection(cursor, cursor);
+        await vscode.commands.executeCommand('editorScroll', { to: 'up', by: 'line', value: editor.document.lineCount, revealCursor: false });
+        if (vscode.window.activeTextEditor === editor && top.line > 0) await vscode.commands.executeCommand('editorScroll', { to: 'down', by: 'line', value: top.line, revealCursor: false });
+      }
+      this.books.delete(address.bookId);
+      this.highlights.apply(editor);
+      this.refreshStatus();
+      this.captureAgentContext(editor);
+    })).finally(() => {
+      this.restoring.delete(uri.toString());
+      this.refreshing = undefined;
+    });
+    return this.refreshing;
+  }
+
   private async showMenu(): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     const address = editor && chapterAddress(editor.document.uri);
@@ -294,6 +336,7 @@ export class NativeReader implements vscode.Disposable {
     const items = [
       { label: '$(settings-gear) 阅读设置', description: '每页章节数、字体、配色、高亮、缩略图', run: () => showReaderAppearance(editor.document.uri) },
       { label: '$(files) 每页章节数', run: () => this.choosePageSize() },
+      { label: '$(refresh) 刷新当前阅读页', description: '重新获取本页章节，保留阅读位置', run: () => this.refreshPage() },
       { label: '$(list-ordered) 章节目录', run: () => this.showCatalog() },
       { label: '$(library) 书城 / 搜索', run: () => this.actions.openLibrary('bookstore') },
       { label: '$(bookmark) 书架', run: () => this.actions.openLibrary('shelf') },
@@ -383,12 +426,18 @@ export class NativeReader implements vscode.Disposable {
         order: Number(chapter.realChapterOrder) || Math.max(0, index + 1), readAt: now,
       };
       await setReadHistory([entry, ...history.filter(item => item.bookId !== bookId)].slice(0, 100));
-      await setLocalShelf([{
+      const shelfEntry = {
         bookId, title: entry.title, author: entry.author, coverUrl: entry.coverUrl,
         addedAt: previous?.addedAt ?? now, lastReadItemId: entry.itemId, lastReadChapterTitle: entry.chapterTitle, lastReadAt: now,
-      }, ...shelf.filter(item => item.bookId !== bookId)]);
-      this.actions.onProgressChanged();
-      if (await getUser()) this.remoteWrites = this.remoteWrites.then(() => api.updateReadProgress(bookId, entry.itemId, entry.order)).catch(error => console.warn('[fanqie remote progress]', error));
+      };
+      await setLocalShelf([shelfEntry, ...shelf.filter(item => item.bookId !== bookId)]);
+      // Returning from a sidebar/settings view must keep local resume state fresh, but it is
+      // not a chapter change and must not redraw the library or contact the cloud again.
+      if (this.lastPublished !== key) {
+        this.lastPublished = key;
+        this.actions.onProgressChanged({ history: entry, shelf: shelfEntry });
+        if (await getUser()) this.remoteWrites = this.remoteWrites.then(() => api.updateReadProgress(bookId, entry.itemId, entry.order)).catch(error => console.warn('[fanqie remote progress]', error));
+      }
     }).catch(error => { this.lastRecorded = ''; console.warn('[fanqie progress]', error); });
     return this.progressWrites;
   }
@@ -436,7 +485,7 @@ export class NativeReader implements vscode.Disposable {
     this.positions = Object.fromEntries(Object.entries(this.positions).sort(([, a], [, b]) => b.updatedAt - a.updatedAt).slice(0, 200));
     const snapshot = { ...this.positions };
     this.positionWrites = this.positionWrites.catch(error => console.warn('[fanqie positions]', error))
-      .then(async () => { await this.context.globalState.update(POSITIONS_KEY, snapshot); });
+      .then(async () => { await updateMemento(this.context.globalState, POSITIONS_KEY, snapshot); });
     await Promise.all([this.positionWrites, this.progressWrites]);
   }
 

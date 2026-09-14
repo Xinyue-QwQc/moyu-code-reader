@@ -25,7 +25,7 @@ writeFileSync(path.join(workspace, 'reference.json'), JSON.stringify({
 }, null, 2));
 mkdirSync(path.join(artifacts, 'user-data', 'User'), { recursive: true });
 writeFileSync(path.join(artifacts, 'user-data', 'User', 'settings.json'), JSON.stringify({
-  'telemetry.telemetryLevel': 'off', 'workbench.startupEditor': 'none', 'window.restoreWindows': 'none',
+  'telemetry.telemetryLevel': 'off', 'window.menuStyle': 'custom', 'workbench.startupEditor': 'none', 'window.restoreWindows': 'none',
   'window.titleBarStyle': 'custom', 'workbench.colorTheme': 'Default Dark Modern',
   'workbench.editor.enablePreview': false, 'editor.fontFamily': 'Consolas, "Courier New", monospace',
   'editor.fontSize': 18, 'editor.lineHeight': 27, 'editor.minimap.enabled': true,
@@ -38,6 +38,9 @@ writeFileSync(path.join(artifacts, 'user-data', 'User', 'settings.json'), JSON.s
 // Check shipped defaults in a separate profile before the flat-layout regression suite.
 mkdirSync(path.join(artifacts, 'defaults-user-data', 'User'), { recursive: true });
 writeFileSync(path.join(artifacts, 'defaults-user-data', 'User', 'settings.json'), readFileSync(path.join(artifacts, 'user-data', 'User', 'settings.json')));
+
+mkdirSync(path.join(artifacts, 'ui-user-data', 'User'), { recursive: true });
+writeFileSync(path.join(artifacts, 'ui-user-data', 'User', 'settings.json'), readFileSync(path.join(artifacts, 'user-data', 'User', 'settings.json')));
 
 let executable = process.env.VSCODE_EXECUTABLE_PATH;
 if (!executable && !process.env.VSCODE_VERSION && process.platform === 'win32') {
@@ -73,7 +76,7 @@ exports.activate = async function () {
   await vscode.commands.executeCommand('workbench.action.quit');
 };
 `);
-for (const phase of process.env.FANQIE_CODEX_EXTENSION ? ['codex'] : process.env.FANQIE_LIVE_ONLY ? ['live'] : ['defaults', 'main', 'restore']) {
+for (const phase of process.env.FANQIE_CODEX_EXTENSION ? ['codex'] : process.env.FANQIE_LIVE_ONLY ? ['live'] : process.env.FANQIE_UI_ONLY ? ['ui'] : ['ui', 'defaults', 'main', 'restore']) {
   const debugPort = await port();
   console.log('\n=== Real VS Code integration: ' + phase + ' ===');
   const exit = await new Promise((resolve, reject) => {
@@ -82,7 +85,7 @@ for (const phase of process.env.FANQIE_CODEX_EXTENSION ? ['codex'] : process.env
       ...(process.env.FANQIE_CODEX_EXTENSION ? ['--extensionDevelopmentPath=' + process.env.FANQIE_CODEX_EXTENSION] : []),
       '--disable-telemetry', '--new-window', '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-workspace-trust',
       '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-features=CalculateNativeWinOcclusion',
-      '--user-data-dir=' + path.join(artifacts, phase === 'defaults' ? 'defaults-user-data' : 'user-data'), '--extensions-dir=' + path.join(artifacts, 'extensions'),
+      '--user-data-dir=' + path.join(artifacts, phase === 'defaults' ? 'defaults-user-data' : phase === 'ui' ? 'ui-user-data' : 'user-data'), '--extensions-dir=' + path.join(artifacts, 'extensions'),
       '--remote-debugging-port=' + debugPort,
     ], { windowsHide: true, env: { ...process.env,
       ...(phase === 'codex' ? { CODEX_HOME: path.join(artifacts, 'isolated-codex-home') } : {}),

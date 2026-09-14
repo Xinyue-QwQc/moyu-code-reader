@@ -47,6 +47,8 @@ export class ChapterFileSystem implements vscode.FileSystemProvider, vscode.Disp
   private readonly pages = new Map<string, ReadingPage>();
   private readonly pendingPages = new Map<string, Promise<ReadingPage>>();
   private readonly createdAt = Date.now();
+  private modifiedAt = this.createdAt;
+  private readonly refreshing = new Map<string, Promise<ReadingPage>>();
 
   peek(uri: vscode.Uri): api.ChapterData | undefined { return this.peekPage(uri)?.chapters[0]; }
   peekPage(uri: vscode.Uri): ReadingPage | undefined { return this.pages.get(uri.toString()); }
@@ -114,11 +116,57 @@ export class ChapterFileSystem implements vscode.FileSystemProvider, vscode.Disp
     return request;
   }
 
+  /** Explicit refresh only. Publish all chapters atomically; failed requests leave readable text intact. */
+  refresh(uri: vscode.Uri): Promise<ReadingPage> {
+    const address = chapterAddress(uri);
+    if (!address) return Promise.reject(vscode.FileSystemError.FileNotFound(uri));
+    const key = uri.toString();
+    const existing = this.refreshing.get(key);
+    if (existing) return existing;
+    const request = (async () => {
+      const fresh = new Map<string, api.ChapterData>();
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(4, address.itemIds.length) }, async () => {
+        while (next < address.itemIds.length) {
+          const itemId = address.itemIds[next++];
+          const chapter = await api.getChapter(itemId);
+          if (chapter.itemId !== itemId || (chapter.bookId && chapter.bookId !== address.bookId)) throw new Error('返回的章节与请求不一致，已保留原阅读页。');
+          chapterText(chapter);
+          fresh.set(itemId, chapter);
+        }
+      }));
+      // Let pre-existing reads finish before replacing the cache so stale work cannot overwrite refresh.
+      const pendingChapters = address.itemIds.flatMap(id => this.pending.get(positionKey(address.bookId, id)) ?? []);
+      const pendingPages = [...this.pendingPages].filter(([pageKey]) => {
+        const pendingAddress = chapterAddress(vscode.Uri.parse(pageKey));
+        return pendingAddress?.bookId === address.bookId && pendingAddress.itemIds.some(id => fresh.has(id));
+      }).map(([, pending]) => pending);
+      await Promise.allSettled([...pendingChapters, ...pendingPages]);
+      for (const [itemId, chapter] of fresh) this.cache.set(positionKey(address.bookId, itemId), chapter);
+      const changed: vscode.FileChangeEvent[] = [];
+      for (const [pageKey, old] of this.pages) {
+        const pageUri = vscode.Uri.parse(pageKey);
+        const pageAddress = chapterAddress(pageUri);
+        if (pageAddress?.bookId !== address.bookId || !pageAddress.itemIds.some(id => fresh.has(id))) continue;
+        const page = readingPage(old.chapters.map(chapter => fresh.get(chapter.itemId) ?? chapter), pageAddress.paragraphSpacing);
+        this.pages.set(pageKey, page);
+        if (page.text !== old.text) changed.push({ type: vscode.FileChangeType.Changed, uri: pageUri });
+      }
+      const page = readingPage(address.itemIds.map(id => fresh.get(id)!), address.paragraphSpacing);
+      this.pages.set(key, page);
+      this.modifiedAt = Math.max(Date.now(), this.modifiedAt + 1);
+      if (changed.length) this.changes.fire(changed);
+      return page;
+    })().finally(() => this.refreshing.delete(key));
+    this.refreshing.set(key, request);
+    return request;
+  }
+
   watch(): vscode.Disposable { return new vscode.Disposable(() => {}); }
   stat(uri: vscode.Uri): vscode.FileStat {
     if (!uri.path.endsWith(CHAPTER_EXTENSION)) return { type: vscode.FileType.Directory, ctime: this.createdAt, mtime: this.createdAt, size: 0 };
     if (!chapterAddress(uri)) throw vscode.FileSystemError.FileNotFound(uri);
-    return { type: vscode.FileType.File, ctime: this.createdAt, mtime: this.createdAt,
+    return { type: vscode.FileType.File, ctime: this.createdAt, mtime: this.modifiedAt,
       size: Buffer.byteLength(this.peekPage(uri)?.text ?? '', 'utf8'), permissions: vscode.FilePermission.Readonly };
   }
   readDirectory(): [string, vscode.FileType][] { return []; }

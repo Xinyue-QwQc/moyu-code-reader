@@ -12,7 +12,7 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; }
+html, body { height: 100%; width: 100%; min-width: 0; }
 body {
   font-family: var(--vscode-font-family);
   background: var(--bg);
@@ -20,7 +20,7 @@ body {
   font-size: 14px;
   overflow: hidden;
 }
-#app { height: 100vh; display: flex; flex-direction: column; }
+#app { height: 100vh; min-width: 0; width: 100%; display: flex; flex-direction: column; }
 
 .loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--fg2); }
 
@@ -41,7 +41,17 @@ body {
 }
 .nav-tab:hover { background: var(--border); color: var(--fg); }
 .nav-tab.active { background: var(--accent); color: #fff; font-weight: 600; }
-.navbar .spacer { flex: 1; }
+.nav-tabs { display: flex; gap: 4px; min-width: 0; }
+.nav-tools { display: flex; align-items: center; gap: 4px; margin-left: auto; min-width: 0; }
+.nav-tab, .chip, .shelf-tab { white-space: nowrap; }
+.nav-user { background: none; border: 0; border-radius: 6px; padding: 4px; min-width: 0; }
+.nav-user:hover, .nav-user.active { background: var(--border); }
+.nav-user .user-name { min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-user img, .nav-user .avatar-fallback { flex-shrink: 0; }
+.icon-btn { width: 28px; height: 28px; flex-shrink: 0; border: 0; border-radius: 6px; background: transparent; color: var(--fg2); font-size: 20px; line-height: 1; cursor: pointer; }
+.icon-btn:hover { color: var(--fg); background: var(--border); }
+.icon-btn:disabled { opacity: .5; cursor: wait; }
+button:focus-visible, [tabindex]:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder, var(--accent)); outline-offset: 2px; }
 .nav-user { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg2); cursor: pointer; }
 .nav-user img { width: 22px; height: 22px; border-radius: 50%; }
 .nav-user .avatar-fallback {
@@ -50,7 +60,7 @@ body {
 }
 
 /* ============ 内容区 ============ */
-.view { flex: 1; overflow-y: auto; padding: 12px; }
+.view { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; overflow-wrap: anywhere; }
 .hidden { display: none !important; }
 
 /* ============ 登录 ============ */
@@ -58,7 +68,7 @@ body {
 .login-wrap h2 { margin-bottom: 6px; }
 .login-wrap .sub { color: var(--fg2); margin-bottom: 18px; font-size: 13px; }
 .qr-box {
-  width: 240px; height: 240px; margin: 0 auto 14px;
+  width: min(240px, 100%); aspect-ratio: 1; height: auto; margin: 0 auto 14px;
   border: 1px dashed var(--border); border-radius: var(--radius);
   background: #fff; display: flex; align-items: center; justify-content: center;
   overflow: hidden; position: relative;
@@ -86,7 +96,8 @@ body {
 }
 .cookie-hint, .key-hint { text-align: left; font-size: 12px; color: var(--fg2); margin-top: 6px; line-height: 1.6; }
 .user-card { display: flex; align-items: center; gap: 12px; margin: 20px auto; max-width: 400px; padding: 16px; background: var(--bg2); border-radius: var(--radius); }
-.user-card img { width: 48px; height: 48px; border-radius: 50%; }
+.user-card > div { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.user-card img { flex-shrink: 0; width: 48px; height: 48px; border-radius: 50%; }
 .user-card .name { font-weight: 600; }
 .user-card .desc { color: var(--fg2); font-size: 12px; }
 
@@ -127,11 +138,12 @@ body {
 .rank-tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 
 /* ============ 搜索 ============ */
-.search-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+.search-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-bottom: 12px; }
 .search-bar input {
-  flex: 1; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
+  min-width: 0; width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--bg2); color: var(--fg); font-size: 14px;
 }
+.search-bar .btn { white-space: nowrap; padding: 8px 12px; }
 .search-list .row {
   display: flex; gap: 12px; padding: 10px; background: var(--bg2); border-radius: var(--radius);
   margin-bottom: 8px; cursor: pointer; border: 1px solid var(--border);
@@ -153,7 +165,7 @@ body {
 .shelf-tab:hover { color: var(--fg); }
 .shelf-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .shelf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; }
-.shelf-item { position: relative; }
+.shelf-item { position: relative; min-width: 0; }
 .shelf-item .remove {
   position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%;
   background: rgba(0,0,0,0.55); color: #fff; border: none; cursor: pointer; font-size: 11px; line-height: 20px;
@@ -213,4 +225,46 @@ body {
 
 @media (max-width: 640px) {
   .book-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+}
+
+/* Narrow sidebars get a two-row header, not compressed vertical Chinese text. */
+@media (max-width: 520px) {
+  .navbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 6px 10px; }
+  .navbar .brand { grid-row: 1; grid-column: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+  .nav-tools { grid-row: 1; grid-column: 2; max-width: 145px; margin: 0; }
+  .nav-user .user-name { max-width: 76px; }
+  .nav-tabs { grid-row: 2; grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .nav-tab { min-width: 0; padding: 6px 8px; }
+  .view { padding: 10px; }
+  .login-wrap { margin: 14px auto; }
+  .user-card { padding: 12px; gap: 10px; text-align: left; }
+  .user-card .name { font-size: 14px; line-height: 1.5; }
+  .history-sec { margin: 20px auto; }
+  .history-item { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 3px 10px; padding: 10px; }
+  .history-item .cover { grid-column: 1; grid-row: 1 / 3; width: 40px; height: 54px; }
+  .history-item .hi-info { grid-column: 2; }
+  .history-item .time { grid-column: 2; font-size: 10px; white-space: normal; }
+  .history-item .hi-info .title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .search-list .row { gap: 10px; padding: 8px; }
+  .search-list .cover { width: 44px; height: 59px; }
+  .shelf-tabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .shelf-tab { padding: 8px 4px; font-size: 12px; }
+  .shelf-grid, .book-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 90px), 1fr)); gap: 10px; }
+  .chip { padding: 4px 9px; }
+  .modal-mask { padding: 10px; }
+  .modal { padding: 12px; }
+  .modal .top { gap: 10px; }
+  .modal .top > div { min-width: 0; overflow-wrap: anywhere; }
+  .modal .cover { width: 66px; height: 88px; }
+  .modal .title { font-size: 15px; }
+  .modal .actions { flex-wrap: wrap; }
+  .modal .actions .btn { flex: 1; padding: 8px 10px; }
+}
+@media (max-width: 320px) {
+  .nav-user .user-name { display: none; }
+  .navbar { padding: 6px 8px; }
+  .view { padding: 8px; }
+  .search-bar { gap: 6px; }
+  .search-bar input { padding: 8px; font-size: 13px; }
+  .user-card img { width: 38px; height: 38px; }
 }

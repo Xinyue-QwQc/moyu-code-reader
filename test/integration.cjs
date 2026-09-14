@@ -54,6 +54,11 @@ exports.run = async function run() {
     await vscode.commands.executeCommand('workbench.action.closePanel');
     await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
 
+    if (phase === 'ui') {
+      await require('./library-ui.cjs').run({ reader, devtools, artifacts, report, check, set, fixtures });
+      return;
+    }
+
     if (phase === 'defaults') {
       const longParagraph = '这是原小说中的同一个长段落，自动折行的续行不应该额外空一行。'.repeat(9);
       chapters[0].paragraphs[0] = longParagraph;
@@ -191,6 +196,27 @@ exports.run = async function run() {
         assert.equal(received.fsPath, file.fsPath);
         assert.equal(received.label, 'current.md');
         report.evidence.attachmentDeliveredToCodexWebview = true;
+        await reader.openBook(BOOK_ID, ITEMS[0]);
+        const editor = vscode.window.activeTextEditor;
+        editor.selection = new vscode.Selection(2, 3, 4, 12);
+        const selectionText = editor.document.getText(editor.selection);
+        await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+        await vscode.commands.executeCommand('editor.action.showContextMenu');
+        await until(async () => (await devtools.menuText()).includes('发送选中文字到 Codex'), 'Codex selection menu appears only with installed extension');
+        await devtools.screenshot(artifacts, 'reader-context-menu-with-codex');
+        await devtools.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+        await devtools.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+        const selectionFile = await vscode.commands.executeCommand('fanqie.agent.sendSelectionToCodex');
+        assert.ok(selectionFile?.scheme === 'file');
+        const selectionSnapshot = await fs.readFile(selectionFile.fsPath, 'utf8');
+        assert.ok(selectionSnapshot.includes(selectionText));
+        assert.ok(selectionSnapshot.length < editor.document.getText().length / 2, 'selection action must not attach a whole chapter');
+        const selectedReceived = await until(() => evaluate('globalThis.__fanqieAttachments.find(file=>file.label.startsWith("selection-"))'), 'Codex received the selection snapshot');
+        assert.equal(selectedReceived.fsPath, selectionFile.fsPath);
+        editor.selection = new vscode.Selection(5, 0, 5, 4);
+        assert.equal(await fs.readFile(selectionFile.fsPath, 'utf8'), selectionSnapshot, 'attachment is immutable after selection changes');
+        report.evidence.selectionDeliveredToCodex = { file: selectionFile.fsPath, characters: selectionText.length, immutable: true, modelRequestSent: false };
+
         const targets = await (await fetch('http://127.0.0.1:' + process.env.FANQIE_TEST_DEBUG_PORT + '/json/list')).json();
         report.evidence.targets = targets.map(target => ({ type: target.type, title: target.title, url: target.url }));
         await devtools.screenshot(artifacts, 'codex-context-attachment');

@@ -25,7 +25,7 @@ export function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri, hos
 <title>fanqie</title>
 <link rel="stylesheet" href="${media('style.css')}?v=${v}">
 </head>
-<body data-host="${host}">
+<body data-host="${host}" data-vscode-context='{"webviewSection":"fanqieLibrary","fanqieHost":"${host}"}'>
 <div id="app">
   <div id="loading" class="loading">加载中…</div>
 </div>

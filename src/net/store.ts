@@ -3,6 +3,7 @@
  */
 import * as vscode from 'vscode';
 import { jar } from './http';
+import { updateMemento } from './state';
 
 const COOKIE_KEY = 'fanqie.cookies.v1';
 const USER_KEY = 'fanqie.user.v1';
@@ -58,7 +59,7 @@ export async function saveCookies(): Promise<void> {
 export async function clearCookies(): Promise<void> {
   jar.clear();
   if (secrets) await secrets.delete(COOKIE_KEY);
-  if (globalState) await globalState.update(USER_KEY, undefined);
+  if (globalState) await updateMemento(globalState, USER_KEY, undefined);
 }
 
 export async function getUser(): Promise<UserInfo | null> {
@@ -66,7 +67,7 @@ export async function getUser(): Promise<UserInfo | null> {
 }
 
 export async function setUser(u: UserInfo | null): Promise<void> {
-  if (globalState) await globalState.update(USER_KEY, u ?? undefined);
+  if (globalState) await updateMemento(globalState, USER_KEY, u ?? undefined);
 }
 
 export async function getDevice(): Promise<DeviceInfo> {
@@ -78,7 +79,7 @@ export async function getDevice(): Promise<DeviceInfo> {
     deviceType: 'P30',
     deviceBrand: 'realme',
   };
-  if (globalState) await globalState.update(DEVICE_KEY, dev);
+  if (globalState) await updateMemento(globalState, DEVICE_KEY, dev);
   return dev;
 }
 
@@ -98,7 +99,7 @@ export async function getLocalShelf(): Promise<LocalShelfItem[]> {
 }
 
 export async function setLocalShelf(items: LocalShelfItem[]): Promise<void> {
-  if (globalState) await globalState.update(SHELF_KEY, items);
+  if (globalState) await updateMemento(globalState, SHELF_KEY, items);
 }
 
 /** 历史记录条目：按书去重，最近阅读的排在最前（本地记录，无需登录） */
@@ -119,5 +120,5 @@ export async function getReadHistory(): Promise<HistoryItem[]> {
 }
 
 export async function setReadHistory(items: HistoryItem[]): Promise<void> {
-  if (globalState) await globalState.update(HISTORY_KEY, items);
+  if (globalState) await updateMemento(globalState, HISTORY_KEY, items);
 }

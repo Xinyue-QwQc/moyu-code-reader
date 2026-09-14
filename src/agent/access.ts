@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { NativeReader } from '../reader/reader';
 import { AGENT_TOOLS, ReaderAgentService, SOURCE_NOTICE } from './service';
 import { startAgentServer } from './server';
+import { attachNovelSelection, codexAvailable, CODEX_FILE_COMMAND, requireCodex } from './codex';
 
 interface Bridge { directory: string; url: string; close(): Promise<void> }
 
@@ -35,6 +36,10 @@ export class ReaderAgentAccess implements vscode.Disposable {
     }));
     register('fanqie.agent.context', () => this.showMenu());
     register('fanqie.agent.attachCodex', () => this.attachCodex());
+    register('fanqie.agent.sendSelectionToCodex', () => attachNovelSelection(this.context));
+    const detectCodex = () => { void vscode.commands.executeCommand('setContext', 'fanqie.codexAvailable', codexAvailable()); };
+    this.subscriptions.push(vscode.extensions.onDidChange(detectCodex));
+    detectCodex();
     register('fanqie.agent.openContext', async () => {
       const uri = await this.contextFile();
       await vscode.window.showTextDocument(uri, { preview: false, viewColumn: vscode.ViewColumn.Beside });
@@ -150,20 +155,16 @@ export class ReaderAgentAccess implements vscode.Disposable {
   }
 
   private async attachCodex(): Promise<vscode.Uri> {
+    await requireCodex();
     const file = await this.contextFile();
-    const extension = vscode.extensions.getExtension('openai.chatgpt');
-    if (!extension) throw new Error('未安装 Codex；可以用「打开上下文文件」交给其他文件型 agent，原生 VS Code 工具不受影响。');
-    await extension.activate();
-    const commands = await vscode.commands.getCommands(true);
-    if (!commands.includes('chatgpt.addFileToThread')) throw new Error('当前 Codex 版本不提供文件附件命令；请用「打开上下文文件」提供上下文。无需修改 Codex 设置。');
-    // Codex deliberately ignores non-file schemes; hand it an ordinary local generated file instead.
-    await vscode.commands.executeCommand('chatgpt.addFileToThread', file);
-    return file; // Attach only; never send a prompt or trigger a model without the user's action.
+    // Codex deliberately ignores non-file schemes; hand it an ordinary generated file instead.
+    await vscode.commands.executeCommand(CODEX_FILE_COMMAND, file);
+    return file; // Attach only; never automatically submit a prompt.
   }
 
   private async showMenu(): Promise<void> {
     const selected = await vscode.window.showQuickPick([
-      { label: '$(comment-discussion) 提供当前上下文给 Codex', description: '添加本地上下文附件，含未展示章节读取入口；不会自动发送聊天', command: 'fanqie.agent.attachCodex' },
+      ...(codexAvailable() ? [{ label: '$(comment-discussion) 提供当前上下文给 Codex', description: '添加本地上下文附件，含未展示章节读取入口；不会自动发送聊天', command: 'fanqie.agent.attachCodex' }] : []),
       { label: '$(file-text) 打开上下文文件（其他 agent）', description: '普通本地文件，不是 fanqie: 虚拟 URI', command: 'fanqie.agent.openContext' },
       { label: '$(copy) 复制上下文入口', description: '可粘贴给支持本地文件 / 终端的 agent', command: 'copy' },
     ], { title: 'AI 阅读访问 · 不需要额外配置 agent' });

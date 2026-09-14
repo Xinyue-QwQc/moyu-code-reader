@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { DEFAULT_PARAGRAPH_SPACING, READER_LANGUAGE } from './content';
 import { validColor } from './palette';
 import { camouflageMode, CamouflageMode } from './camouflage';
+import { fontFamilySetting, fontsForLanguage, listInstalledFonts, readingLanguage } from './fonts';
 
 type FontOption = 'fontFamily' | 'fontSize' | 'lineHeight';
 const fontLabels: Record<FontOption, string> = { fontFamily: '字体', fontSize: '字号', lineHeight: '行间距（行高）' };
@@ -46,26 +47,77 @@ function fontDescription(option: FontOption, uri?: vscode.Uri): string {
   return custom === undefined ? '跟随 VS Code · ' + value : String(value);
 }
 
+/** Choose from actual installed fonts; apply only on acceptance (Escape leaves settings untouched). */
+export async function chooseReaderFont(uri?: vscode.Uri): Promise<void> {
+  const document = vscode.workspace.textDocuments.find(document => uri && document.uri.toString() === uri.toString());
+  const language = readingLanguage(document?.getText() ?? '');
+  const picker = vscode.window.createQuickPick<vscode.QuickPickItem & { family?: string; reset?: boolean }>();
+  picker.title = '小说字体 · ' + (language === 'chinese' ? '中文' : '非中文');
+  picker.placeholder = '正在读取已安装字体…';
+  picker.matchOnDescription = true;
+  picker.busy = true;
+  const rescan = { iconPath: new vscode.ThemeIcon('refresh'), tooltip: '重新扫描已安装字体' };
+  picker.buttons = [rescan];
+  let closed = false;
+  let loadId = 0;
+  const load = async (refresh = false) => {
+    const id = ++loadId;
+    picker.busy = true;
+    try {
+      const fonts = fontsForLanguage(await listInstalledFonts(refresh), language);
+      if (closed || id !== loadId) return;
+      const current = fontConfig(uri).get<string>('fontFamily', '');
+      picker.items = [
+        { label: '跟随 VS Code 字体', description: '恢复默认，仅影响小说', reset: true },
+        ...fonts.map(font => ({ label: font.displayName, family: font.family,
+          description: [font.family !== font.displayName ? font.family : '', current === fontFamilySetting(font.family) ? '当前字体' : '', font.chinese ? '支持中文' : '非中文'].filter(Boolean).join(' · ') })),
+      ];
+      picker.placeholder = '已筛选 ' + fonts.length + ' 个可用字体，点击即应用；也可输入名称搜索';
+      const selected = picker.items.find(item => item.family && current === fontFamilySetting(item.family));
+      if (selected) picker.activeItems = [selected];
+    } catch (error) {
+      if (closed || id !== loadId) return;
+      picker.items = [{ label: '跟随 VS Code 字体', reset: true }];
+      picker.placeholder = '读取字体失败，点击右上角重新扫描';
+      void vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));
+    } finally { if (!closed && id === loadId) picker.busy = false; }
+  };
+  await new Promise<void>((resolve, reject) => {
+    let accepting = false;
+    const subscriptions = [
+      picker.onDidTriggerButton(() => { void load(true); }),
+      picker.onDidAccept(() => {
+        const selected = picker.selectedItems[0];
+        if (!selected || accepting) return;
+        accepting = true;
+        void setReaderFont('fontFamily', selected.reset ? undefined : fontFamilySetting(selected.family!), uri)
+          .then(() => { picker.hide(); resolve(); }, error => { picker.hide(); reject(error); });
+      }),
+      picker.onDidHide(() => { closed = true; subscriptions.forEach(item => item.dispose()); picker.dispose(); if (!accepting) resolve(); }),
+    ];
+    picker.show();
+    void load();
+  });
+}
+
 async function editFont(option: FontOption, uri?: vscode.Uri): Promise<void> {
+  if (option === 'fontFamily') return chooseReaderFont(uri);
   const config = fontConfig(uri);
   const inspected = config.inspect(option);
   const custom = inspected?.workspaceFolderLanguageValue ?? inspected?.workspaceLanguageValue ?? inspected?.globalLanguageValue;
-  const family = option === 'fontFamily';
   const value = await vscode.window.showInputBox({
     title: '小说专属' + fontLabels[option],
-    prompt: family ? '填写字体名称或逗号分隔的字体列表。留空恢复跟随 VS Code；不修改普通代码字体。'
-      : option === 'fontSize' ? '字号（像素，6–100）。留空恢复跟随 VS Code。'
+    prompt: option === 'fontSize' ? '字号（像素，6–100）。留空恢复跟随 VS Code。'
         : '行高：大于等于 8 为像素，小于 8 为字号倍数，0 为自动。留空跟随 VS Code。',
     value: custom === undefined ? '' : String(custom),
-    placeHolder: family ? '例如：Consolas, "Microsoft YaHei", monospace' : String(config.get(option)),
+    placeHolder: String(config.get(option)),
     validateInput: text => {
       if (!text.trim()) return undefined;
-      if (family) return /[\r\n]/.test(text) ? '请输入单行字体名称。' : undefined;
       const number = Number(text);
       return Number.isFinite(number) && number >= (option === 'fontSize' ? 6 : 0) && number <= 100 ? undefined : '请输入有效数值（最大 100），或留空跟随编辑器。';
     },
   });
-  if (value !== undefined) await setReaderFont(option, value.trim() ? family ? value.trim() : Number(value) : undefined, uri);
+  if (value !== undefined) await setReaderFont(option, value.trim() ? Number(value) : undefined, uri);
 }
 
 async function editColor(section: string, key: string, title: string, uri?: vscode.Uri): Promise<void> {

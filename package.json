@@ -2,7 +2,7 @@
   "name": "fanqie-novel",
   "displayName": "番茄小说",
   "description": "番茄小说原生阅读器：每页可合并多章，独立字体、行间距、段间距与配色；状态栏阅读设置和 AI 上下文，支持 agent 按需读取未展示章节，无需另配 Codex/MCP。",
-  "version": "2028.8.227",
+  "version": "2028.8.228",
   "publisher": "zwb8926",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -28,7 +28,8 @@
     "reader"
   ],
   "activationEvents": [
-    "onFileSystem:fanqie"
+    "onFileSystem:fanqie",
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -134,6 +135,40 @@
         "command": "fanqie.reader.camouflage",
         "title": "番茄小说：实验性代码伪装配色",
         "icon": "$(beaker)"
+      },
+      {
+        "command": "fanqie.reader.font",
+        "title": "番茄小说：选择小说字体",
+        "icon": "$(text-size)"
+      },
+      {
+        "command": "fanqie.reader.refresh",
+        "title": "番茄小说：刷新当前阅读页",
+        "icon": "$(refresh)",
+        "enablement": "resourceScheme == fanqie"
+      },
+      {
+        "command": "fanqie.library.refresh",
+        "title": "番茄小说：刷新",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "fanqie.agent.sendSelectionToCodex",
+        "title": "发送选中文字到 Codex",
+        "icon": "$(comment-discussion)",
+        "enablement": "resourceScheme == fanqie && editorHasSelection && fanqie.codexAvailable && isWorkspaceTrusted && config.fanqie.reader.agent.enabled"
+      },
+      {
+        "command": "fanqie.reader.hideTextCursor",
+        "title": "隐藏文本光标",
+        "icon": "$(eye-closed)",
+        "enablement": "resourceScheme == fanqie"
+      },
+      {
+        "command": "fanqie.reader.showTextCursor",
+        "title": "显示文本光标",
+        "icon": "$(eye)",
+        "enablement": "resourceScheme == fanqie"
       }
     ],
     "keybindings": [
@@ -212,6 +247,61 @@
         },
         {
           "command": "fanqie.reader.camouflage"
+        },
+        {
+          "command": "fanqie.reader.font"
+        },
+        {
+          "command": "fanqie.reader.refresh",
+          "when": "resourceScheme == fanqie"
+        },
+        {
+          "command": "fanqie.library.refresh"
+        },
+        {
+          "command": "fanqie.agent.sendSelectionToCodex",
+          "when": "resourceScheme == fanqie && editorHasSelection && fanqie.codexAvailable"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "fanqie.agent.sendSelectionToCodex",
+          "when": "resourceScheme == fanqie && editorHasSelection && fanqie.codexAvailable && isWorkspaceTrusted && config.fanqie.reader.agent.enabled",
+          "group": "fanqie@1"
+        },
+        {
+          "command": "fanqie.reader.font",
+          "when": "resourceScheme == fanqie",
+          "group": "fanqie@2"
+        },
+        {
+          "command": "fanqie.reader.refresh",
+          "when": "resourceScheme == fanqie",
+          "group": "fanqie@3"
+        },
+        {
+          "command": "fanqie.reader.hideTextCursor",
+          "when": "resourceScheme == fanqie && !config.fanqie.reader.hideTextCursor",
+          "group": "fanqie@4"
+        },
+        {
+          "command": "fanqie.reader.showTextCursor",
+          "when": "resourceScheme == fanqie && config.fanqie.reader.hideTextCursor",
+          "group": "fanqie@4"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "fanqie.library.refresh",
+          "when": "webviewSection == fanqieLibrary",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "fanqie.library.refresh",
+          "when": "view == fanqie.main",
+          "group": "navigation"
         }
       ]
     },
@@ -381,6 +471,12 @@
             "强伪装：更短的词组，叙述与对话都强制多色。阅读舒适度会降低。"
           ],
           "markdownDescription": "**实验性，默认关闭。** 用确定性的词组分段模拟属性、函数、类型、关键字、字符串、数字、注释与标点颜色；不是实际语义分析。不添加代码符号、不改正文、字体、行段间距、背景或其他代码文件。开启时临时接管自动对白和正文前景色；手动关键词仍优先，关闭后原设置立即恢复。颜色复用当前代码主题，原生缩略图同步。高亮总开关关闭时暂停。状态栏「设置 → 实验性代码伪装配色」可直接切换。"
+        },
+        "fanqie.reader.hideTextCursor": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "隐藏小说正文的文本插入光标及当前行高亮；鼠标指针、文字选择和复制不受影响。右键可切回显示。仅在小说为活动编辑器时生效，切换代码文件自动恢复原色。"
         }
       }
     },

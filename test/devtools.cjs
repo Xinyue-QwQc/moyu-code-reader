@@ -49,6 +49,16 @@ async function connect(port, choose) {
   };
   return {
     send, evaluate,
+    async menuText() {
+      return evaluate(`(() => {
+        function collect(root) {
+          let text = [...root.querySelectorAll('.monaco-menu, [role="menu"]')].map(e=>e.textContent).join(' ');
+          for (const element of root.querySelectorAll('*')) if (element.shadowRoot) text += ' ' + collect(element.shadowRoot);
+          return text;
+        }
+        return collect(document).trim();
+      })()`);
+    },
     async editor() {
       return evaluate(`(() => {
         const editor = [...document.querySelectorAll('.monaco-editor')].find(el => el.getBoundingClientRect().width > 100 && el.getBoundingClientRect().height > 80 && el.querySelector('.view-line'));
@@ -96,4 +106,24 @@ async function connect(port, choose) {
     close() { socket.close(); },
   };
 }
-module.exports = { connect, until, delay };
+async function connectWebview(devtools, host) {
+  const target = await until(async () => {
+    const targets = await devtools.send('Target.getTargets');
+    return targets.targetInfos.find(target => target.type === 'iframe' && target.url.includes('vscode-webview'));
+  }, 'isolated library webview target');
+  const { sessionId } = await devtools.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
+  await devtools.send('Runtime.enable', {}, sessionId);
+  const frame = await until(async () => {
+    const tree = await devtools.send('Page.getFrameTree', {}, sessionId);
+    return tree.frameTree.childFrames?.[0]?.frame;
+  }, 'isolated library content frame');
+  const isolated = await devtools.send('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'fanqie-library-test' }, sessionId);
+  const evaluate = async expression => {
+    const result = await devtools.send('Runtime.evaluate', { expression, contextId: isolated.executionContextId, returnByValue: true, awaitPromise: true }, sessionId);
+    if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+    return result.result.value;
+  };
+  await until(async () => (await evaluate('document.body.dataset.host')) === host, 'library host: ' + host);
+  return { evaluate, sessionId, targetId: target.targetId };
+}
+module.exports = { connect, connectWebview, until, delay };

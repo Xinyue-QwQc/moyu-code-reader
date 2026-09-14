@@ -7,28 +7,32 @@ import { broadcast, setOpenBookInEditorHandler } from './webview/router';
 import { NativeReader } from './reader/reader';
 import { chapterAddress } from './reader/documents';
 import { ReaderAgentAccess } from './agent/access';
+import { ReaderCaret } from './reader/caret';
 
 let reader: NativeReader | undefined;
 let agentAccess: ReaderAgentAccess | undefined;
+let readerCaret: ReaderCaret | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   initStore(context);
   await loadPersisted();
+  readerCaret = new ReaderCaret(context);
+  await readerCaret.start();
   reader = new NativeReader(context, {
     openLibrary: view => openPanel(context, view),
     openDetails: bookId => openBookInPanel(context, bookId),
     openComments: bookId => openBookInPanel(context, bookId, 'comments'),
-    onProgressChanged: () => broadcast({ type: 'reading-progress-changed' }),
+    onProgressChanged: progress => broadcast({ type: 'reading-progress-changed', ...progress }),
   });
   agentAccess = new ReaderAgentAccess(context, reader);
-  context.subscriptions.push(reader, agentAccess);
+  context.subscriptions.push(reader, agentAccess, readerCaret);
   const nativeReader = reader;
   setOpenBookInEditorHandler((bookId, mode, itemId) => mode === 'reader'
     ? nativeReader.openBook(bookId, itemId)
     : openBookInPanel(context, bookId));
 
   const sidebarProvider = new FanqieSidebarProvider(context.extensionUri);
-  context.subscriptions.push(vscode.window.registerWebviewViewProvider(FanqieSidebarProvider.viewType, sidebarProvider));
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider(FanqieSidebarProvider.viewType, sidebarProvider, { webviewOptions: { retainContextWhenHidden: true } }));
   const register = (cmd: string, fn: (...args: any[]) => unknown) => {
     context.subscriptions.push(vscode.commands.registerCommand(cmd, async (...args: any[]) => {
       try { return await fn(...args); }
@@ -36,6 +40,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }));
   };
   register('fanqie.open', () => openPanel(context));
+  register('fanqie.library.refresh', (target?: { fanqieHost?: string; viewId?: string }) => broadcast({ type: 'refresh', host: target?.fanqieHost ?? (target?.viewId === FanqieSidebarProvider.viewType ? 'sidebar' : undefined) }));
   register('fanqie.search', () => openPanel(context, 'search'));
   register('fanqie.login', () => openPanel(context, 'login'));
   register('fanqie.openBook', async (id?: string, itemId?: string) => {
@@ -70,6 +75,8 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export async function deactivate(): Promise<void> {
+  await readerCaret?.stop();
+  readerCaret = undefined;
   setOpenBookInEditorHandler(undefined);
   agentAccess?.dispose();
   await agentAccess?.stop();
