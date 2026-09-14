@@ -1,8 +1,8 @@
 {
   "name": "fanqie-novel",
   "displayName": "番茄小说",
-  "description": "🍅 番茄小说阅读器：在 VS Code 里直接阅读番茄小说：抖音扫码登录、书城（排行榜/分类）、搜索、书架、历史记录、沉浸式阅读器（上下翻页/字号主题/工具栏显隐）、书评。",
-  "version": "2028.8.223",
+  "description": "番茄小说原生阅读器：每页可合并多章，原生缩略图、滚动、查找和续读；默认跟随代码编辑器，支持独立字体、字号、行距、正文配色及对话高亮，阅读设置直达底部状态栏。",
+  "version": "2028.8.224",
   "publisher": "zwb8926",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -27,7 +27,9 @@
     "book",
     "reader"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onFileSystem:fanqie"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -51,7 +53,7 @@
     "commands": [
       {
         "command": "fanqie.open",
-        "title": "番茄小说：打开阅读器",
+        "title": "番茄小说：打开书城",
         "icon": "$(book)"
       },
       {
@@ -68,6 +70,50 @@
         "command": "fanqie.openBook",
         "title": "番茄小说：按书籍 ID 打开",
         "icon": "$(link)"
+      },
+      {
+        "command": "fanqie.reader.previousChapter",
+        "title": "番茄小说：上一页（按每页章节数）",
+        "icon": "$(chevron-left)",
+        "enablement": "resourceScheme == fanqie"
+      },
+      {
+        "command": "fanqie.reader.nextChapter",
+        "title": "番茄小说：下一页（按每页章节数）",
+        "icon": "$(chevron-right)",
+        "enablement": "resourceScheme == fanqie"
+      },
+      {
+        "command": "fanqie.reader.catalog",
+        "title": "番茄小说：章节目录",
+        "icon": "$(list-ordered)",
+        "enablement": "resourceScheme == fanqie"
+      },
+      {
+        "command": "fanqie.reader.menu",
+        "title": "番茄小说：阅读菜单",
+        "icon": "$(book)",
+        "enablement": "resourceScheme == fanqie"
+      },
+      {
+        "command": "fanqie.reader.settings",
+        "title": "番茄小说：阅读高亮设置",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "fanqie.reader.toggleHighlight",
+        "title": "番茄小说：开关全部阅读高亮",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "fanqie.reader.appearance",
+        "title": "番茄小说：阅读设置（字体、配色、每页章节数）",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "fanqie.reader.pageSize",
+        "title": "番茄小说：每页章节数",
+        "icon": "$(files)"
       }
     ],
     "keybindings": [
@@ -75,6 +121,18 @@
         "command": "fanqie.open",
         "key": "ctrl+alt+shift+n",
         "mac": "cmd+alt+shift+n"
+      },
+      {
+        "command": "fanqie.reader.previousChapter",
+        "key": "ctrl+alt+pageup",
+        "mac": "cmd+alt+pageup",
+        "when": "editorTextFocus && resourceScheme == fanqie"
+      },
+      {
+        "command": "fanqie.reader.nextChapter",
+        "key": "ctrl+alt+pagedown",
+        "mac": "cmd+alt+pagedown",
+        "when": "editorTextFocus && resourceScheme == fanqie"
       }
     ],
     "menus": {
@@ -94,8 +152,212 @@
         {
           "command": "fanqie.openBook",
           "when": "true"
+        },
+        {
+          "command": "fanqie.reader.previousChapter",
+          "when": "resourceScheme == fanqie"
+        },
+        {
+          "command": "fanqie.reader.nextChapter",
+          "when": "resourceScheme == fanqie"
+        },
+        {
+          "command": "fanqie.reader.catalog",
+          "when": "resourceScheme == fanqie"
+        },
+        {
+          "command": "fanqie.reader.menu",
+          "when": "resourceScheme == fanqie"
+        },
+        {
+          "command": "fanqie.reader.settings"
+        },
+        {
+          "command": "fanqie.reader.toggleHighlight"
+        },
+        {
+          "command": "fanqie.reader.appearance"
+        },
+        {
+          "command": "fanqie.reader.pageSize"
         }
       ]
+    },
+    "languages": [
+      {
+        "id": "fanqie-novel",
+        "aliases": [
+          "小说",
+          "Fanqie Novel"
+        ],
+        "extensions": [
+          ".fanqie"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "番茄小说 · 原生阅读",
+      "properties": {
+        "fanqie.reader.highlight.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "启用小说对话 / 关键词高亮。默认字体、字号、行距和配色均跟随原生编辑器；需要独立调整时，点击状态栏「外观」设置，**只影响小说**。关闭本项不清除自定义正文字体和正文颜色。"
+        },
+        "fanqie.reader.highlight.dialogue.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "启用对话（“…”、「…」、『…』、英文双引号）的前景色高亮。只根据标点 / 词表匹配，不使用 AI 推断人物身份或心理活动。"
+        },
+        "fanqie.reader.highlight.dialogue.color": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "scope": "resource",
+          "markdownDescription": "对话（“…”、「…」、『…』、英文双引号）的颜色。留空随小说配色方案 / VS Code 明暗主题；可填 `#RRGGBB` 或 `#RRGGBBAA`。"
+        },
+        "fanqie.reader.highlight.dialogue.opacity": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.3,
+          "maximum": 1,
+          "scope": "resource",
+          "description": "对话（“…”、「…」、『…』、英文双引号）的高亮强度（文字不透明度）。1 为正常，越小越淡；不修改文字背景、粗细、大小或行距。"
+        },
+        "fanqie.reader.highlight.innerQuotes.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "启用单引号文字（‘…’，可用于内心独白 / 引用）的前景色高亮。只根据标点 / 词表匹配，不使用 AI 推断人物身份或心理活动。"
+        },
+        "fanqie.reader.highlight.innerQuotes.color": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "scope": "resource",
+          "markdownDescription": "单引号文字（‘…’，可用于内心独白 / 引用）的颜色。留空随小说配色方案 / VS Code 明暗主题；可填 `#RRGGBB` 或 `#RRGGBBAA`。"
+        },
+        "fanqie.reader.highlight.innerQuotes.opacity": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.3,
+          "maximum": 1,
+          "scope": "resource",
+          "description": "单引号文字（‘…’，可用于内心独白 / 引用）的高亮强度（文字不透明度）。1 为正常，越小越淡；不修改文字背景、粗细、大小或行距。"
+        },
+        "fanqie.reader.highlight.keywords.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "启用人物名 / 地点 / 自定义关键词的前景色高亮。只根据标点 / 词表匹配，不使用 AI 推断人物身份或心理活动。"
+        },
+        "fanqie.reader.highlight.keywords.color": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "scope": "resource",
+          "markdownDescription": "人物名 / 地点 / 自定义关键词的颜色。留空随小说配色方案 / VS Code 明暗主题；可填 `#RRGGBB` 或 `#RRGGBBAA`。"
+        },
+        "fanqie.reader.highlight.keywords.opacity": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.3,
+          "maximum": 1,
+          "scope": "resource",
+          "description": "人物名 / 地点 / 自定义关键词的高亮强度（文字不透明度）。1 为正常，越小越淡；不修改文字背景、粗细、大小或行距。"
+        },
+        "fanqie.reader.highlight.keywords.words": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "maxItems": 200,
+          "uniqueItems": true,
+          "default": [],
+          "scope": "resource",
+          "description": "要高亮的人物名 / 地点 / 关键词。默认为空，不标记任何叙述文字；按字面区分大小写匹配，不是正则表达式。关键词优先于引号颜色。"
+        },
+        "fanqie.reader.appearance.preset": {
+          "type": "string",
+          "default": "theme",
+          "enum": [
+            "theme",
+            "soft",
+            "warm",
+            "cool"
+          ],
+          "enumDescriptions": [
+            "跟随 VS Code 明暗主题，标准字符串高亮",
+            "柔和低对比度前景色",
+            "暖色文字",
+            "冷色文字"
+          ],
+          "scope": "resource",
+          "markdownDescription": "仅调整小说正文及高亮的前景配色，不更改普通代码页面。单独设置的文字颜色优先。**字体 / 字号 / 行距**通过状态栏「外观」直接调整，使用 VS Code 的小说语言专属设置；默认跟随编辑器。"
+        },
+        "fanqie.reader.appearance.foreground": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "scope": "resource",
+          "description": "小说叙述正文的文字颜色。留空随配色方案 / 编辑器主题；不影响普通代码。 支持 #RRGGBB / #RRGGBBAA。"
+        },
+        "fanqie.reader.appearance.lineBackground": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "scope": "resource",
+          "description": "小说正文行的底色。留空保持透明。仅正文行生效，行号、缩略图和正文以外的空白区域仍使用 VS Code 原生主题；不会更改整个工作台背景。 支持 #RRGGBB / #RRGGBBAA。"
+        },
+        "fanqie.reader.chaptersPerPage": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 50,
+          "scope": "resource",
+          "markdownDescription": "一个原生虚拟文件合并展示的连续章节数（1–50）。默认一章一页；例如设为 3 时依次展示第 1–3、4–6 章，最后一页展示剩余章节。可直接从底部状态栏「每页 N 章」调整，当前页自动重组并保留正在阅读的位置。"
+        }
+      }
+    },
+    "colors": [
+      {
+        "id": "fanqie.dialogueForeground",
+        "description": "小说对话的默认前景色。",
+        "defaults": {
+          "dark": "#CE9178",
+          "light": "#A31515",
+          "highContrast": "#CE9178",
+          "highContrastLight": "#A31515"
+        }
+      },
+      {
+        "id": "fanqie.innerQuotesForeground",
+        "description": "小说单引号内容的默认前景色。",
+        "defaults": {
+          "dark": "#B8A1CC",
+          "light": "#795EAB",
+          "highContrast": "#B8A1CC",
+          "highContrastLight": "#795EAB"
+        }
+      },
+      {
+        "id": "fanqie.keywordsForeground",
+        "description": "小说自定义关键词的默认前景色。",
+        "defaults": {
+          "dark": "#9CDCFE",
+          "light": "#001080",
+          "highContrast": "#9CDCFE",
+          "highContrastLight": "#001080"
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "[fanqie-novel]": {
+        "editor.minimap.enabled": true
+      }
     }
   },
   "scripts": {
@@ -103,11 +365,15 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "prepackage": "node scripts/check-version.mjs && node scripts/clean-vsix.mjs",
-    "package": "vsce package --no-dependencies --allow-missing-repository"
+    "package": "vsce package --no-dependencies --allow-missing-repository",
+    "pretest": "npm run compile",
+    "test": "node --test test/*.test.cjs",
+    "test:integration": "npm run compile && node scripts/test-vscode.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.2",
     "typescript": "^5.5.0"
   }

@@ -11,9 +11,6 @@ import {
   setLocalShelf,
   LocalShelfItem,
   getUser,
-  getReaderSettings,
-  setReaderSettings,
-  ReaderSettings,
   getReadHistory,
   setReadHistory,
   HistoryItem,
@@ -32,11 +29,11 @@ const liveWebviews = new Set<vscode.Webview>();
 
 /** 由扩展入口注册：把书籍打开到编辑器标签页（面板） */
 let openBookInEditorHandler:
-  | ((bookId: string, mode: 'modal' | 'reader', itemId?: string) => void)
+  | ((bookId: string, mode: 'modal' | 'reader', itemId?: string) => Promise<void>)
   | undefined;
 
 export function setOpenBookInEditorHandler(
-  fn: (bookId: string, mode: 'modal' | 'reader', itemId?: string) => void
+  fn: ((bookId: string, mode: 'modal' | 'reader', itemId?: string) => Promise<void>) | undefined
 ): void {
   openBookInEditorHandler = fn;
 }
@@ -59,6 +56,7 @@ async function handleMessage(webview: vscode.Webview, msg: any): Promise<void> {
 
   switch (msg?.type) {
     /* ------------------------------ 认证 ------------------------------ */
+    case 'ready':
     case 'login-status': {
       const user = await getUser();
       post(true, { user, loggedIn: !!user });
@@ -320,17 +318,6 @@ async function handleMessage(webview: vscode.Webview, msg: any): Promise<void> {
       break;
     }
 
-    /* ------------------------------ 设置 ------------------------------ */
-    case 'settings-get': {
-      post(true, getReaderSettings());
-      break;
-    }
-    case 'settings-set': {
-      await setReaderSettings(msg.settings as ReaderSettings);
-      post(true);
-      break;
-    }
-
     /* ------------------------------ 其他 ------------------------------ */
     case 'open-external': {
       void vscode.env.openExternal(vscode.Uri.parse(String(msg.url ?? '')));
@@ -339,7 +326,8 @@ async function handleMessage(webview: vscode.Webview, msg: any): Promise<void> {
     }
     case 'open-editor-book': {
       // 侧边栏请求：在编辑器标签页中打开书籍阅读器（可携带 itemId 续读历史章节）
-      openBookInEditorHandler?.(
+      if (!openBookInEditorHandler) throw new Error('阅读器尚未就绪，请重试。');
+      await openBookInEditorHandler(
         String(msg.bookId ?? ''),
         msg.mode === 'modal' ? 'modal' : 'reader',
         msg.itemId ? String(msg.itemId) : undefined
@@ -362,18 +350,16 @@ async function pollAndFinalize(ticket: QrTicket, onStatus: (s: QrStatus) => void
  * 为某个 webview 挂载消息路由，并推送初始状态。
  * 返回 dispose：卸载路由并从广播集合移除。
  */
-export function attachRouter(webview: vscode.Webview): vscode.Disposable {
+export function attachRouter(webview: vscode.Webview, onReady?: () => void): vscode.Disposable {
   liveWebviews.add(webview);
   const disp = webview.onDidReceiveMessage((msg: any) => {
-    void handleMessage(webview, msg).catch(err => {
+    void handleMessage(webview, msg).then(() => {
+      if (msg?.type === 'ready') onReady?.();
+    }).catch(err => {
       const message = err instanceof Error ? err.message : String(err);
       webview.postMessage({ type: 'resp', id: msg?.id, ok: false, error: message });
     });
   });
-  void (async () => {
-    const user = await getUser();
-    webview.postMessage({ type: 'init', user, settings: getReaderSettings(), loggedIn: !!user });
-  })();
   return {
     dispose: () => {
       liveWebviews.delete(webview);

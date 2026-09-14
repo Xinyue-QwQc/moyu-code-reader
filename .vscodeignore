@@ -8,3 +8,6 @@ research/
 .git-ssh/
 .git/**
 .*
+test/
+.test-data/
+.vscode-test/

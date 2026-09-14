@@ -15,8 +15,8 @@ export class FanqieSidebarProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')],
     };
-    view.webview.html = buildHtml(view.webview, this.extensionUri, 'sidebar');
     const disp = attachRouter(view.webview);
+    view.webview.html = buildHtml(view.webview, this.extensionUri, 'sidebar');
     view.onDidDispose(() => disp.dispose());
   }
 }

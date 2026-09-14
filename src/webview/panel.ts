@@ -1,42 +1,44 @@
-/**
- * Webview 面板：加载 media/index.html，处理前端消息，转发到 API / 认证层。
- */
+/** The Webview now hosts only the library, account, book details and reviews. */
 import * as vscode from 'vscode';
 import { buildHtml } from './html';
-import { attachRouter, broadcast } from './router';
+import { attachRouter } from './router';
 
-let panel: vscode.WebviewPanel | undefined;
+let current: { panel: vscode.WebviewPanel; ready: Promise<boolean> } | undefined;
 
-export function openPanel(context: vscode.ExtensionContext, view?: string): void {
-  if (panel) {
-    panel.reveal(vscode.ViewColumn.Active);
-    if (view) {
-      panel.webview.postMessage({ type: 'nav', view });
-    }
-    return;
+async function revealPanel(context: vscode.ExtensionContext): Promise<vscode.WebviewPanel | undefined> {
+  if (!current) {
+    const panel = vscode.window.createWebviewPanel('fanqie', '番茄书城', vscode.ViewColumn.Active, {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')],
+    });
+    let ready!: (value: boolean) => void;
+    const state = { panel, ready: new Promise<boolean>(resolve => { ready = resolve; }) };
+    current = state;
+    panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'fanqie.svg');
+    // Register the handshake before assigning HTML. No arbitrary 350/400ms opening race.
+    const router = attachRouter(panel.webview, () => ready(true));
+    panel.onDidDispose(() => {
+      router.dispose();
+      ready(false);
+      if (current === state) current = undefined;
+    });
+    panel.webview.html = buildHtml(panel.webview, context.extensionUri, 'panel');
+  } else {
+    current.panel.reveal(vscode.ViewColumn.Active);
   }
-  panel = vscode.window.createWebviewPanel('fanqie', 'fanqie', vscode.ViewColumn.Active, {
-    enableScripts: true,
-    retainContextWhenHidden: true,
-    localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')],
-  });
-  // 标题栏图标：使用单色 SVG（VS Code 根据主题自动染色），不再使用彩色 PNG
-  panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'fanqie.svg');
-  panel.webview.html = buildHtml(panel.webview, context.extensionUri, 'panel');
-  panel.onDidDispose(() => {
-    panel = undefined;
-  });
-
-  const disp = attachRouter(panel.webview);
-  panel.onDidDispose(() => disp.dispose());
+  const state = current;
+  return await state.ready && current === state ? state.panel : undefined;
 }
 
-export function disposePanel(): void {
-  panel?.dispose();
-  panel = undefined;
+export async function openPanel(context: vscode.ExtensionContext, view?: string): Promise<void> {
+  const panel = await revealPanel(context);
+  if (view) await panel?.webview.postMessage({ type: 'nav', view });
 }
 
-/** 面板/侧边栏就绪后，让前端打开指定书籍（mode: modal=详情弹窗，reader=直接进入阅读器，itemId=续读章节） */
-export function openBookInPanel(bookId: string, mode: 'modal' | 'reader' = 'modal', itemId?: string): void {
-  broadcast({ type: mode === 'reader' ? 'open-book-reader' : 'open-book', bookId, itemId });
+export async function openBookInPanel(context: vscode.ExtensionContext, bookId: string, mode: 'modal' | 'comments' = 'modal'): Promise<void> {
+  const panel = await revealPanel(context);
+  await panel?.webview.postMessage({ type: mode === 'comments' ? 'open-book-comments' : 'open-book', bookId });
 }
+
+export function disposePanel(): void { current?.panel.dispose(); current = undefined; }

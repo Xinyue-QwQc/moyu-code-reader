@@ -8,7 +8,6 @@ const COOKIE_KEY = 'fanqie.cookies.v1';
 const USER_KEY = 'fanqie.user.v1';
 const DEVICE_KEY = 'fanqie.device.v1';
 const SHELF_KEY = 'fanqie.localShelf.v1';
-const SETTINGS_KEY = 'fanqie.readerSettings.v1';
 const HISTORY_KEY = 'fanqie.readHistory.v1';
 
 export interface UserInfo {
@@ -100,27 +99,6 @@ export async function getLocalShelf(): Promise<LocalShelfItem[]> {
 
 export async function setLocalShelf(items: LocalShelfItem[]): Promise<void> {
   if (globalState) await globalState.update(SHELF_KEY, items);
-}
-
-export interface ReaderSettings {
-  fontSize: number;
-  lineHeight: number;
-  theme: 'day' | 'night' | 'sepia';
-}
-
-export function defaultReaderSettings(): ReaderSettings {
-  // 沉浸式阅读（只显示极简顶栏 + 全屏正文），夜间主题低调不刺眼
-  return { fontSize: 19, lineHeight: 1.9, theme: 'night' };
-}
-
-export function getReaderSettings(): ReaderSettings {
-  const s = globalState?.get<ReaderSettings>(SETTINGS_KEY);
-  const merged: ReaderSettings = { ...defaultReaderSettings(), ...(s ?? {}) };
-  return merged;
-}
-
-export async function setReaderSettings(s: ReaderSettings): Promise<void> {
-  if (globalState) await globalState.update(SETTINGS_KEY, s);
 }
 
 /** 历史记录条目：按书去重，最近阅读的排在最前（本地记录，无需登录） */

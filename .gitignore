@@ -3,3 +3,5 @@ out/
 *.vsix
 .git-ssh/
 .vscode/
+.test-data/
+.vscode-test/

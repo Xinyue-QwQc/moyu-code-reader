@@ -1,73 +1,74 @@
-/**
- * 番茄小说 VS Code 扩展入口。
- */
+/** 番茄小说：书城用 Webview，正文使用真正的 VS Code 只读代码编辑器。 */
 import * as vscode from 'vscode';
 import { initStore, loadPersisted, getUser } from './net/store';
 import { openPanel, disposePanel, openBookInPanel } from './webview/panel';
 import { FanqieSidebarProvider } from './webview/sidebar';
-import { setOpenBookInEditorHandler } from './webview/router';
+import { broadcast, setOpenBookInEditorHandler } from './webview/router';
+import { NativeReader } from './reader/reader';
+import { chapterAddress } from './reader/documents';
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+let reader: NativeReader | undefined;
+
+export async function activate(context: vscode.ExtensionContext) {
   initStore(context);
   await loadPersisted();
-
-  // 侧边栏请求打开书籍时，转到编辑器标签页（面板）
-  setOpenBookInEditorHandler((bookId, mode, itemId) => {
-    openPanel(context);
-    setTimeout(() => openBookInPanel(bookId, mode, itemId), 350);
+  reader = new NativeReader(context, {
+    openLibrary: view => openPanel(context, view),
+    openDetails: bookId => openBookInPanel(context, bookId),
+    openComments: bookId => openBookInPanel(context, bookId, 'comments'),
+    onProgressChanged: () => broadcast({ type: 'reading-progress-changed' }),
   });
+  context.subscriptions.push(reader);
+  const nativeReader = reader;
+  setOpenBookInEditorHandler((bookId, mode, itemId) => mode === 'reader'
+    ? nativeReader.openBook(bookId, itemId)
+    : openBookInPanel(context, bookId));
 
-  // 侧边栏（活动栏入口）
   const sidebarProvider = new FanqieSidebarProvider(context.extensionUri);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(FanqieSidebarProvider.viewType, sidebarProvider)
-  );
-
-  const register = (cmd: string, fn: (...args: any[]) => any) => {
-    context.subscriptions.push(vscode.commands.registerCommand(cmd, fn));
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider(FanqieSidebarProvider.viewType, sidebarProvider));
+  const register = (cmd: string, fn: (...args: any[]) => unknown) => {
+    context.subscriptions.push(vscode.commands.registerCommand(cmd, async (...args: any[]) => {
+      try { return await fn(...args); }
+      catch (error) { await vscode.window.showErrorMessage('番茄小说：' + (error instanceof Error ? error.message : String(error))); }
+    }));
   };
-
   register('fanqie.open', () => openPanel(context));
-
   register('fanqie.search', () => openPanel(context, 'search'));
-
   register('fanqie.login', () => openPanel(context, 'login'));
-
-  register('fanqie.openBook', async () => {
-    const bookId = await vscode.window.showInputBox({
-      prompt: '输入番茄小说书籍 ID（书籍链接 https://fanqienovel.com/page/{bookId} 中的数字）',
+  register('fanqie.openBook', async (id?: string, itemId?: string) => {
+    const bookId = id ?? await vscode.window.showInputBox({
+      prompt: '输入番茄小说书籍 ID，直接在原生编辑器中阅读（自动续读）',
       placeHolder: '例如 7576659101376072728',
-      validateInput: v => (v && /^\d{10,}$/.test(v.trim()) ? undefined : '请输入合法的书籍 ID（纯数字）'),
+      validateInput: value => /^\d{10,}$/.test(value.trim()) ? undefined : '请输入合法的书籍 ID（纯数字）',
     });
-    if (!bookId) return;
-    openPanel(context);
-    setTimeout(() => openBookInPanel(bookId.trim()), 400);
+    if (bookId) await nativeReader.openBook(bookId.trim(), itemId);
   });
 
-  // 状态栏：登录状态
-  const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  // The library entry remains available when no novel is active; reader controls own this space otherwise.
+  const statusItem = vscode.window.createStatusBarItem('fanqie.library', vscode.StatusBarAlignment.Right, 100);
+  statusItem.name = '番茄小说书城';
   statusItem.command = 'fanqie.open';
   context.subscriptions.push(statusItem);
   const refreshStatus = async () => {
     const user = await getUser();
-    if (user) {
-      statusItem.text = `$(book) 番茄 · ${user.name}`;
-      statusItem.tooltip = '番茄小说：已登录（点击打开）';
-    } else {
-      statusItem.text = '$(book) 番茄小说';
-      statusItem.tooltip = '番茄小说（点击打开，未登录）';
-    }
-    statusItem.show();
+    statusItem.text = '$(book) 番茄小说';
+    statusItem.tooltip = user ? '番茄小说：' + user.name + '（点击打开书城）' : '番茄小说（点击打开书城，未登录）';
+    if (vscode.window.activeTextEditor && chapterAddress(vscode.window.activeTextEditor.document.uri)) statusItem.hide();
+    else statusItem.show();
   };
   void refreshStatus();
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration(() => void refreshStatus()),
-    vscode.window.onDidChangeWindowState(() => void refreshStatus())
+    vscode.window.onDidChangeActiveTextEditor(() => void refreshStatus()),
+    vscode.window.onDidChangeWindowState(() => void refreshStatus()),
+    { dispose: disposePanel },
   );
-
-  context.subscriptions.push({ dispose: disposePanel });
+  return { openBook: (bookId: string, itemId?: string) => nativeReader.openBook(bookId, itemId), flush: () => nativeReader.flush() };
 }
 
-export function deactivate(): void {
+export async function deactivate(): Promise<void> {
+  setOpenBookInEditorHandler(undefined);
+  reader?.dispose();
+  await reader?.flush();
+  reader = undefined;
   disposePanel();
 }
